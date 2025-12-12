@@ -6,7 +6,8 @@ def project_off_axis(p, head_x, head_y,
                      unit_scale,
                      width,
                      height,
-                     world_to_camera):
+                     world_to_camera,
+                     return_scale: bool = False):
     """
     Project a 3D point to 2D screen coordinates using off-axis projection.
     All required parameters are passed explicitly to avoid circular imports.
@@ -29,4 +30,6 @@ def project_off_axis(p, head_x, head_y,
 
     scale = (eye_depth / (eye_depth + z_cam)) * unit_scale
 
-    return (pixel_x, pixel_y, scale)
+    if return_scale:
+        return (pixel_x, pixel_y, scale)
+    return (pixel_x, pixel_y)

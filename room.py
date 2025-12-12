@@ -44,6 +44,16 @@ class RoomRenderer:
         if not (q1 and q2 and q3 and q4):
             return
 
+        # ensure we have just coordinate pairs
+        if isinstance(q1, (tuple, list)) and len(q1) >= 2:
+            q1 = (q1[0], q1[1])
+        if isinstance(q2, (tuple, list)) and len(q2) >= 2:
+            q2 = (q2[0], q2[1])
+        if isinstance(q3, (tuple, list)) and len(q3) >= 2:
+            q3 = (q3[0], q3[1])
+        if isinstance(q4, (tuple, list)) and len(q4) >= 2:
+            q4 = (q4[0], q4[1])
+
         pygame.draw.polygon(surface, color, [q1, q2, q3, q4])
 
         # Neon sci-fi edges

@@ -128,7 +128,12 @@ class Flower:
         self,
         surface: pygame.Surface,
         project_fn,
-        screen_size=None
+        head_x=None,
+        head_y=None,
+        screen_size=None,
+        z_cam=None,
+        total_depth=None,
+        draw_size=None
     ) -> None:
 
         # 1. Convert to temporary 3D point
@@ -154,7 +159,9 @@ class Flower:
                 return
 
         # 4. Compute draw size from projection scale
-        draw_size = max(1, int(self.size * scale))
+        flattened = scale ** 0.52
+        draw_size = int(self.size * flattened * 105)
+        draw_size = max(1, draw_size)
 
         # 5. Base gray colors
         gray_center = (200, 200, 200)
@@ -172,6 +179,13 @@ class Flower:
             int(lerp(gray_center[i], (255, 230, 120)[i], self.color_progress))
             for i in range(3)
         )
+
+        # 7. Depth-based fade (AFTER colors are computed)
+        depth_fade = min(1.0, flattened * 1.2)
+
+        petal_color = tuple(int(c * depth_fade) for c in petal_color)
+        center_color = tuple(int(c * depth_fade) for c in center_color)
+
 
         # 7. Draw petals around center
         offsets = [(-0.4, 0), (0.4, 0), (0, -0.35), (0, 0.35)]
@@ -244,7 +258,8 @@ class FlowerField:
         for i in range(lanes):
             x = x_start + i * spacing
             for k in range(max_layers):
-                z = k * spacing + random.uniform(0, 0.05)
+                t = k / max(1, max_layers - 1)
+                z = (t ** 1.7) * self.depth_repeat
                 # small horizontal/vertical jitter for natural look
                 hx = x + random.uniform(-0.06, 0.06)
                 hy = lane_y + random.uniform(-0.03, 0.03)
@@ -273,8 +288,10 @@ class FlowerField:
             # nearer flowers earlier
             per_target = eased * (0.3 + 0.7 * depth_priority)
             f.update(dt, per_target)
+            depth_norm = min(1.0, f.z / self.depth_repeat)
+            f.y = self.lane_y * (1 - 0.35 * depth_norm)
 
-    def draw(self, surface: pygame.Surface, project_fn, head_x: float, head_y: float) -> None:
+    def draw(self, surface: pygame.Surface, project_fn, head_x: float, head_y: float, screen_size=None) -> None:
         """Draw flowers sorted by camera-space depth (far to near) for correct occlusion.
         
         Computes per-flower z_cam and total_depth to:
@@ -283,7 +300,10 @@ class FlowerField:
         3. Pass depth info to Flower.draw for consistent perspective.
         """
         drawn = 0
-        sw_sh = surface.get_size()
+        if screen_size is None:
+            sw_sh = surface.get_size()
+        else:
+            sw_sh = screen_size
         
         # Import camera helpers from 3d grid module
         try:

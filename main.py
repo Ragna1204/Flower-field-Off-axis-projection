@@ -19,7 +19,7 @@ unit_scale = 220        # pixels per world unit (increase to make flowers larger
 room_depth = 10.0       # extend room depth for a deeper field
 
 # Camera parameters tuned for eye-level standing view
-camera_pitch_deg = 4.0            # small downward pitch (degrees)
+camera_pitch_deg = 2.2            # small downward pitch (degrees)
 camera_pitch = math.radians(camera_pitch_deg)
 camera_height = 0.9               # eye height in world units (approx 1.6m = standing)
 near_clip = 0.05                  # near plane clipping distance (smaller to avoid early culling)
@@ -223,7 +223,7 @@ def main(debug_windowed=False):
 
     tracker = HandTracking()
     renderer = RoomRenderer(width, height)
-    flower_field = FlowerField(lanes=12, lane_y=-0.9, depth_layers=14)
+    flower_field = FlowerField(lanes=12, lane_y=-1.35, depth_layers=14)
     smile_detector = SmileDetector()
 
     head_world_x = 0.0
@@ -277,9 +277,9 @@ def main(debug_windowed=False):
                 camera_pitch, camera_height,
                 eye_depth, near_clip, unit_scale,
                 width, height,
-                world_to_camera,
-                return_scale=True
+                world_to_camera
             ),
+            head_world_x, head_world_y,
             screen_size=(width, height)
         )
 
