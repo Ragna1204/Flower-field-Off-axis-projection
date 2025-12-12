@@ -121,102 +121,110 @@ class Flower:
 
     def update(self, dt: float, progress: float) -> None:
         """Advance color progress toward `progress` (0..1)."""
-        # Smoothly approach target progress (simple lerp with dt-scaled step)
-        speed = 5.0  # responsiveness - tweakable
+        speed = 5.0  # responsiveness
         self.color_progress = lerp(self.color_progress, progress, 1 - math.exp(-speed * dt))
 
-    def draw(self, surface: pygame.Surface, project_fn, head_x: float, head_y: float, 
-             screen_size=None, z_cam=None, total_depth=None, draw_size=None) -> None:
-        """Draw the flower using `project_fn(Point3D, head_x, head_y)` which must
-        return screen coords or None. This decouples projection from this module.
-        
-        Args:
-            z_cam: Camera-space depth (optional, for depth-based effects).
-            total_depth: eye_depth + z_cam (optional, for consistent projection scaling).
-            draw_size: Precomputed pixel size (optional; if None, computed internally).
-        """
-        # compute screen position via provided project function
+    def draw(
+        self,
+        surface: pygame.Surface,
+        project_fn,
+        screen_size=None
+    ) -> None:
+
+        # 1. Convert to temporary 3D point
         p = TempPoint(self.x, self.y, self.z)
-        screen_pos = project_fn(p, head_x, head_y)
-        if not screen_pos:
+
+        # 2. Project into screen space
+        proj = project_fn(p)
+        if proj is None:
             return
-        sx, sy = screen_pos
-        # optional clipping by screen size for performance
+
+        # Must be 3 values: (sx, sy, scale)
+        try:
+            sx, sy, scale = proj
+        except Exception:
+            # Projection returned only (sx, sy) -> fallback to safe scale
+            sx, sy = proj
+            scale = 1.0
+
+        # 3. Screen culling
         if screen_size:
             sw, sh = screen_size
             if sx < -50 or sx > sw + 50 or sy < -50 or sy > sh + 50:
                 return
 
-        # If draw_size not provided, compute it using depth info or fallback
-        if draw_size is None:
-            if total_depth is not None:
-                # Use provided total_depth for projection-consistent scaling
-                try:
-                    from __main__ import eye_depth, unit_scale
-                except:
-                    eye_depth, unit_scale = 3.0, 100
-                perspective_scale = eye_depth / total_depth
-                draw_size = max(1, int(self.size * unit_scale * perspective_scale))
-            else:
-                # Fallback to approximate heuristic
-                depth_scale = max(0.05, 1.0 / (1.0 + self.z * 0.15))
-                draw_size = max(1, int(self.size * depth_scale * 100))
+        # 4. Compute draw size from projection scale
+        draw_size = max(1, int(self.size * scale))
 
-        # compute grayscale and color
-        # grayscale color: light gray center, darker petals
+        # 5. Base gray colors
         gray_center = (200, 200, 200)
-        gray_petal = (160, 160, 160)
+        gray_petal  = (160, 160, 160)
 
-        # target color (convert simple hue to rgb)
+        # 6. Fully-colored hue version blended by color_progress
         rgb_color = self.hsv_to_rgb(self.hue, 0.75, 0.92)
-        petal_color = tuple(int(lerp(gray_petal[i], rgb_color[i], self.color_progress)) for i in range(3))
-        center_color = tuple(int(lerp(gray_center[i], (255, 230, 120)[i], self.color_progress)) for i in range(3))
 
-        # draw petals (4 simple circles around center)
+        petal_color = tuple(
+            int(lerp(gray_petal[i], rgb_color[i], self.color_progress))
+            for i in range(3)
+        )
+
+        center_color = tuple(
+            int(lerp(gray_center[i], (255, 230, 120)[i], self.color_progress))
+            for i in range(3)
+        )
+
+        # 7. Draw petals around center
         offsets = [(-0.4, 0), (0.4, 0), (0, -0.35), (0, 0.35)]
         for ox, oy in offsets:
             ox_pix = int(ox * draw_size)
             oy_pix = int(oy * draw_size)
-            pygame.draw.circle(surface, petal_color, (sx + ox_pix, sy + oy_pix), max(1, int(draw_size * 0.6)))
+            pygame.draw.circle(
+                surface,
+                petal_color,
+                (sx + ox_pix, sy + oy_pix),
+                max(1, int(draw_size * 0.6))
+            )
 
-        # center
-        pygame.draw.circle(surface, center_color, (sx, sy), max(1, int(draw_size * 0.5)))
+        # 8. Draw center
+        pygame.draw.circle(
+            surface,
+            center_color,
+            (sx, sy),
+            max(1, int(draw_size * 0.5))
+        )
+
 
     def is_visible(self, project_fn, head_x: float, head_y: float, screen_size=None) -> bool:
         p = TempPoint(self.x, self.y, self.z)
         screen_pos = project_fn(p, head_x, head_y)
+
         if not screen_pos:
             return False
+
         sx, sy = screen_pos
         if screen_size:
             sw, sh = screen_size
             return -50 < sx < sw + 50 and -50 < sy < sh + 50
+
         return True
 
     @staticmethod
     def hsv_to_rgb(h, s, v) -> Tuple[int, int, int]:
-        # h in [0,1]
         i = int(h * 6)
         f = (h * 6) - i
         p = v * (1 - s)
         q = v * (1 - f * s)
         t = v * (1 - (1 - f) * s)
         i = i % 6
-        if i == 0:
-            r, g, b = v, t, p
-        elif i == 1:
-            r, g, b = q, v, p
-        elif i == 2:
-            r, g, b = p, v, t
-        elif i == 3:
-            r, g, b = p, q, v
-        elif i == 4:
-            r, g, b = t, p, v
-        else:
-            r, g, b = v, p, q
+
+        if i == 0: r, g, b = v, t, p
+        elif i == 1: r, g, b = q, v, p
+        elif i == 2: r, g, b = p, v, t
+        elif i == 3: r, g, b = p, q, v
+        elif i == 4: r, g, b = t, p, v
+        else:        r, g, b = v, p, q
+
         return (int(r * 255), int(g * 255), int(b * 255))
-
-
 class FlowerField:
     """Manages a pool of Flower objects arranged in lanes near the bottom
     of the room and multiple depth layers to create a flower-field effect.

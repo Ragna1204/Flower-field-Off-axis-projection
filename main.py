@@ -6,19 +6,30 @@ import threading
 import time
 import math
 from flowers import FlowerField, SmileDetector
+from geometry import Point3D
+from projection import project_off_axis
+from room import RoomRenderer
 
 # Configuration (initial values; updated to native resolution at runtime)
 width, height = 1000, 700
-eye_depth = 3.0  # Distance from viewer to screen plane (increased for less perspective exaggeration)
-unit_scale = 150  # Pixels per unit in 3D space
-room_depth = 8.0  # Depth of the room in 3D space
 
-# Camera parameters for frontal perspective
-camera_pitch_deg = 6.0  # degrees, positive = camera pitched DOWN (look slightly downward)
+# CAMERA / PROJECTION (tuned for "standing in" the flower field)
+eye_depth = 3.5         # distance from viewer to virtual screen plane (smaller -> stronger perspective)
+unit_scale = 220        # pixels per world unit (increase to make flowers larger on screen)
+room_depth = 10.0       # extend room depth for a deeper field
+
+# Camera parameters tuned for eye-level standing view
+camera_pitch_deg = 4.0            # small downward pitch (degrees)
 camera_pitch = math.radians(camera_pitch_deg)
-camera_height = 0.3  # world units; camera height (shifted down to flower level)
-near_clip = 0.1  # near plane clipping distance
+camera_height = 0.9               # eye height in world units (approx 1.6m = standing)
+near_clip = 0.05                  # near plane clipping distance (smaller to avoid early culling)
 
+# --- Head/world smoothing state & tuning (global state used by main loop) ---
+head_world_x = 0.0
+head_world_y = 0.0
+HEAD_MAP_SCALE_X = 1.2   # maps normalized webcam (-1..1) to world units (left-right)
+HEAD_MAP_SCALE_Y = 0.9   # maps normalized webcam (-1..1) to world units (up-down)
+HEAD_SMOOTH = 0.03        # smoothing factor (0..1) for exponential smoothing
 
 # Camera transformation helpers
 def world_to_camera(p, camera_pitch, camera_height):
@@ -51,46 +62,17 @@ def camera_depth_for_point(p, camera_pitch, camera_height):
     return z_cam, eye_depth + z_cam
 
 
-# 3D Point class
-class Point3D:
-    def __init__(self, x, y, z):
-        self.x = x
-        self.y = y
-        self.z = z
-
-
-def project_off_axis(p, head_x, head_y, camera_pitch=None, camera_height=None):
-    """Project a 3D point to 2D screen coordinates using off-axis projection.
-    
-    Uses camera-space transformation to support camera pitch and height.
-    """
-    if camera_pitch is None:
-        camera_pitch = globals()['camera_pitch']
-    if camera_height is None:
-        camera_height = globals()['camera_height']
-    
-    # Transform to camera space
-    x_cam, y_cam, z_cam = world_to_camera(p, camera_pitch, camera_height)
-    
-    total_depth = eye_depth + z_cam
-    if total_depth <= near_clip:
-        return None
-
-    ratio = eye_depth / total_depth
-    screen_x_virtual = head_x + (x_cam - head_x) * ratio
-    screen_y_virtual = head_y + (y_cam - head_y) * ratio
-
-    pixel_x = int(width / 2 + screen_x_virtual * unit_scale)
-    pixel_y = int(height / 2 - screen_y_virtual * unit_scale)
-    return (pixel_x, pixel_y)
-
-
 # Tracking engine
 class HandTracking:
     def __init__(self):
         self.cap = cv2.VideoCapture(0)
         self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5, min_tracking_confidence=0.5)
+        self.face_mesh = self.mp_face_mesh.FaceMesh(
+            max_num_faces=1,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
         self.head_x, self.head_y = 0.0, 0.0
         self.detected = False
         self.landmarks = None
@@ -135,124 +117,175 @@ class GridRenderer:
     def __init__(self, width, height):
         self.width = width
         self.height = height
-        # overlay surface for glow effects (keep per-instance to avoid reallocating)
         self.overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-    
-    def draw_full_grid(self, surface, head_x, head_y):
-        # draw complete 3d grid (floor, walls, ceiling) with glow
-        base_w = 3.0  # reduced room width to frame flowers tighter
-        h_room = 2.4  # reduced room height
+
+    def draw_full_grid(
+        self,
+        surface,
+        head_x, head_y,
+        camera_pitch, camera_height,
+        eye_depth, near_clip, unit_scale,
+        width, height,
+        world_to_camera,
+        project_off_axis_func,
+        room_depth=10.0
+    ):
+        """Draws the full grid using the updated off-axis projection API."""
+        base_w = 3.0
+        h_room = 2.4
         grid_spacing = 1.0
 
-        # scale room width to screen aspect so grid fills wider screens
+        # Scale room width with aspect
         aspect = max(0.5, float(self.width) / max(1, self.height))
-        w_room = base_w * aspect * 1.0
+        w_room = base_w * aspect
 
-        # clear overlay
+        # Clear glow overlay
         self.overlay.fill((0, 0, 0, 0))
 
-        # floor and ceiling
+        # Helper to call projection correctly
+        def P(point):
+            return project_off_axis_func(
+                point,
+                head_x, head_y,
+                camera_pitch, camera_height,
+                eye_depth, near_clip, unit_scale,
+                width, height,
+                world_to_camera
+            )
+
+        # ---------------- FLOOR + CEILING ----------------
         for x in np.arange(-w_room, w_room + 0.1, grid_spacing):
-            p1 = project_off_axis(Point3D(x, -h_room, 0), head_x, head_y)
-            p2 = project_off_axis(Point3D(x, -h_room, w_room), head_x, head_y)
+            p1 = P(Point3D(x, -h_room, 0))
+            p2 = P(Point3D(x, -h_room, room_depth))
             if p1 and p2:
                 pygame.draw.line(surface, (30, 40, 90), p1, p2, 1)
                 pygame.draw.line(self.overlay, (70, 100, 255, 40), p1, p2, 4)
 
-            p3 = project_off_axis(Point3D(x, h_room, 0), head_x, head_y)
-            p4 = project_off_axis(Point3D(x, h_room, w_room), head_x, head_y)
+            p3 = P(Point3D(x, h_room, 0))
+            p4 = P(Point3D(x, h_room, room_depth))
             if p3 and p4:
                 pygame.draw.line(surface, (30, 40, 90), p3, p4, 1)
                 pygame.draw.line(self.overlay, (70, 100, 255, 40), p3, p4, 4)
 
-        # walls
+        # ---------------- LEFT + RIGHT WALLS ----------------
         for y in np.arange(-h_room, h_room + 0.1, grid_spacing):
-            p1 = project_off_axis(Point3D(-w_room, y, 0), head_x, head_y)
-            p2 = project_off_axis(Point3D(-w_room, y, w_room), head_x, head_y)
+            p1 = P(Point3D(-w_room, y, 0))
+            p2 = P(Point3D(-w_room, y, room_depth))
             if p1 and p2:
                 pygame.draw.line(surface, (30, 40, 90), p1, p2, 1)
                 pygame.draw.line(self.overlay, (70, 100, 255, 40), p1, p2, 3)
 
-            p3 = project_off_axis(Point3D(w_room, y, 0), head_x, head_y)
-            p4 = project_off_axis(Point3D(w_room, y, w_room), head_x, head_y)
+            p3 = P(Point3D(w_room, y, 0))
+            p4 = P(Point3D(w_room, y, room_depth))
             if p3 and p4:
                 pygame.draw.line(surface, (30, 40, 90), p3, p4, 1)
                 pygame.draw.line(self.overlay, (70, 100, 255, 40), p3, p4, 3)
 
-        # traversing lines (depth lines)
+        # ---------------- DEPTH LINES ----------------
         for z in np.arange(0, room_depth + 0.1, grid_spacing):
-            tl = project_off_axis(Point3D(-w_room, h_room, z), head_x, head_y)
-            tr = project_off_axis(Point3D(w_room, h_room, z), head_x, head_y)
-            bl = project_off_axis(Point3D(-w_room, -h_room, z), head_x, head_y)
-            br = project_off_axis(Point3D(w_room, -h_room, z), head_x, head_y)
+            tl = P(Point3D(-w_room, h_room, z))
+            tr = P(Point3D(w_room, h_room, z))
+            bl = P(Point3D(-w_room, -h_room, z))
+            br = P(Point3D(w_room, -h_room, z))
 
             if tl and tr and bl and br:
-                pygame.draw.line(surface, (30, 40, 90), tl, tr, 1) #top
-                pygame.draw.line(surface, (30, 40, 90), bl, br, 1) #bottom
-                pygame.draw.line(surface, (30, 40, 90), tl, bl, 1) #left
-                pygame.draw.line(surface, (30, 40, 90), tr, br, 1) #right
+                pygame.draw.line(surface, (30, 40, 90), tl, tr, 1)
+                pygame.draw.line(surface, (30, 40, 90), bl, br, 1)
+                pygame.draw.line(surface, (30, 40, 90), tl, bl, 1)
+                pygame.draw.line(surface, (30, 40, 90), tr, br, 1)
+
                 pygame.draw.line(self.overlay, (90, 130, 255, 28), tl, tr, 3)
                 pygame.draw.line(self.overlay, (90, 130, 255, 28), bl, br, 3)
                 pygame.draw.line(self.overlay, (90, 130, 255, 28), tl, bl, 2)
                 pygame.draw.line(self.overlay, (90, 130, 255, 28), tr, br, 2)
 
-        # blit overlay containing glow effects
+        # Add soft glow overlay
         surface.blit(self.overlay, (0, 0))
+
 
 
 # Main application loop
 def main(debug_windowed=False):
     pygame.init()
-    # Start fullscreen at native desktop resolution (avoid stretching)
-    # Or windowed for debug
     info = pygame.display.Info()
+
     if debug_windowed:
         screen = pygame.display.set_mode((1280, 800))
     else:
         screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
+
     global width, height
     width, height = screen.get_width(), screen.get_height()
+
     pygame.display.set_caption("3D Off-Axis Projection Grid - Flowers")
     clock = pygame.time.Clock()
     fps = 60
 
     tracker = HandTracking()
-    renderer = GridRenderer(width, height)
-    # place lanes near the bottom of the room
-    flower_field = FlowerField(lanes=12, lane_y=-3.2, depth_layers=10)
+    renderer = RoomRenderer(width, height)
+    flower_field = FlowerField(lanes=12, lane_y=-0.9, depth_layers=14)
     smile_detector = SmileDetector()
+
+    head_world_x = 0.0
+    head_world_y = 0.0
 
     running = True
     while running:
         dt = clock.tick(fps) / 1000.0
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 running = False
 
-        # Fill background (start grayscale)
         screen.fill((10, 10, 10))
 
-        # Get head position from tracker
-        head_x = tracker.head_x if tracker.detected else 0.0
-        head_y = tracker.head_y if tracker.detected else 0.0
+        # --- Head Tracking ---
+        raw_x = tracker.head_x if tracker.detected else 0.0
+        raw_y = -(tracker.head_y) if tracker.detected else 0.0
 
-        # Update smile detector from latest landmarks produced by tracker
+        target_x = raw_x * HEAD_MAP_SCALE_X
+        target_y = raw_y * HEAD_MAP_SCALE_Y
+
+        head_world_x += (target_x - head_world_x) * HEAD_SMOOTH
+        head_world_y += (target_y - head_world_y) * HEAD_SMOOTH
+
+        # Smile detection
         smile_detector.update(getattr(tracker, 'landmarks', None))
         smile_strength = smile_detector.smile_strength
 
-        # Update flower field
-        flower_field.update(dt, head_x, head_y, smile_strength)
+        # Update flowers
+        flower_field.update(dt, head_world_x, head_world_y, smile_strength)
 
-        # Draw scene: grid (room) then flowers
-        renderer.draw_full_grid(screen, head_x, head_y)
-        flower_field.draw(screen, project_off_axis, head_x, head_y)
+        # --- DRAW ROOM (fixed) ---
+        renderer.draw(
+            screen,
+            head_world_x, head_world_y,
+            camera_pitch, camera_height,
+            eye_depth, near_clip, unit_scale,
+            width, height,
+            world_to_camera
+        )
 
-        # Update display
+        # --- DRAW FLOWERS (fixed projection) ---
+        flower_field.draw(
+            screen,
+            lambda p: project_off_axis(
+                p,
+                head_world_x, head_world_y,
+                camera_pitch, camera_height,
+                eye_depth, near_clip, unit_scale,
+                width, height,
+                world_to_camera,
+                return_scale=True
+            ),
+            screen_size=(width, height)
+        )
+
+
         pygame.display.flip()
 
-    # Cleanup
     tracker.stop()
     pygame.quit()
 
