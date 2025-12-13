@@ -274,6 +274,7 @@ def main(debug_windowed=False):
         # --- DRAW FLOWERS (fixed projection) ---
         flower_field.draw(
             screen,
+            glow_surface,
             lambda p: project_off_axis(
                 p,
                 head_world_x, head_world_y,
@@ -282,13 +283,15 @@ def main(debug_windowed=False):
                 width, height,
                 world_to_camera
             ),
-            head_world_x, head_world_y,
             screen_size=(width, height)
         )
 
-        # --- APPLY GLOW ---
-        screen.blit(glow_surface, (0, 0), special_flags=pygame.BLEND_ADD)
-        
+        # --- FOG DIFFUSION / BLOOM ---
+        fog = pygame.transform.smoothscale(glow_surface, (width // 2, height // 2))
+        fog = pygame.transform.smoothscale(fog, (width, height))
+
+        screen.blit(fog, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+
         pygame.display.flip()
 
     tracker.stop()

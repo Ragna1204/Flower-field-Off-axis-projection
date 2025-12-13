@@ -138,14 +138,11 @@ class Flower:
     def draw(
         self,
         surface: pygame.Surface,
+        glow_surface: pygame.Surface,
         project_fn,
-        head_x=None,
-        head_y=None,
-        screen_size=None,
-        z_cam=None,
-        total_depth=None,
-        draw_size=None
+        screen_size=None
     ) -> None:
+
 
         # 1. Convert to temporary 3D point
         p = TempPoint(self.x, self.y, self.z)
@@ -168,11 +165,27 @@ class Flower:
             sw, sh = screen_size
             if sx < -50 or sx > sw + 50 or sy < -50 or sy > sh + 50:
                 return
-
-        # 4. Compute draw size from projection scale
+            
+        # ---- DEPTH-BASED SCALE FLATTENING ----
         flattened = scale ** 0.52
+
+        # ---- DEPTH-BASED FOG STRENGTH ----
+        fog_strength = min(1.0, (1.0 - scale) ** 1.6)
+
+        # ---- FLOWER SIZE ----
         draw_size = int(self.size * flattened * 105)
         draw_size = max(1, draw_size)
+
+        # ---- VOLUMETRIC FOG HALO ----
+        fog_radius = int(draw_size * 1.35)
+
+        fog_alpha = int(18 + 42 * fog_strength)
+
+        fog_rgb = self.hsv_to_rgb(self.hue, 0.35, 0.9)
+        fog_color = tuple(int(c * 0.6) for c in fog_rgb)
+
+        pygame.draw.circle(glow_surface, (*fog_color, fog_alpha), (sx, sy), fog_radius)
+
 
         # 5. Base gray colors
         gray_center = (200, 200, 200)
@@ -181,8 +194,11 @@ class Flower:
         # 6. Fully-colored hue version blended by color_progress
         rgb_color = self.hsv_to_rgb(self.hue, 0.75, 0.92)
 
+        # ---- DEPTH-BASED PETAL GLOW ----
+        depth_glow = max(0.4, scale ** 0.6)
+
         petal_color = tuple(
-            int(lerp(gray_petal[i], rgb_color[i], self.color_progress))
+            int(lerp(gray_petal[i], rgb_color[i], self.color_progress) * depth_glow)
             for i in range(3)
         )
 
@@ -303,7 +319,13 @@ class FlowerField:
             f.y = self.lane_y * (1 - 0.35 * depth_norm)
             f.y += f.breath_offset
 
-    def draw(self, surface: pygame.Surface, project_fn, head_x: float, head_y: float, screen_size=None) -> None:
+    def draw(
+        self,
+        surface: pygame.Surface,
+        glow_surface: pygame.Surface,
+        project_fn,
+        screen_size=None
+    ) -> None:
         """Draw flowers sorted by camera-space depth (far to near) for correct occlusion.
         
         Computes per-flower z_cam and total_depth to:
@@ -364,8 +386,12 @@ class FlowerField:
             draw_size = max(1, int(f.size * unit_scale * perspective_scale))
             
             # Draw flower with computed depth info
-            f.draw(surface, project_fn, head_x, head_y, 
-                   screen_size=sw_sh, z_cam=z_cam, total_depth=total_depth, draw_size=draw_size)
+            f.draw(
+                surface,
+                glow_surface,
+                project_fn,
+                screen_size=sw_sh
+            )
             drawn += 1
 
 
