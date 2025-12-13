@@ -6,6 +6,10 @@ from projection import project_off_axis
 WALL_BASE = (20, 22, 30)
 EDGE_BASE = (90, 130, 255)
 
+def clamp(v, lo=0, hi=255):
+    return max(lo, min(hi, int(v)))
+
+
 class RoomRenderer:
     def __init__(self, width, height):
         self.width = width
@@ -25,21 +29,45 @@ class RoomRenderer:
             return (q[0], q[1])
         return None
 
-    def draw_edge(self, surface, glow, p1, p2, args, depth_factor=1.0):
+    def draw_edge(self, surface, glow, p1, p2, args, depth_factor=1.0, mood=0.0):
         q1 = self.project(p1, *args)
         q2 = self.project(p2, *args)
         if not q1 or not q2:
             return
 
-        # Core edge
-        pygame.draw.line(surface, EDGE_BASE, q1, q2, 1)
+        # Depth-faded brightness
+        fade = max(0.15, depth_factor)
 
-        # Glow edge (thicker + softer)
-        alpha = int(30 * depth_factor)
-        glow_color = (*EDGE_BASE, alpha)
-        pygame.draw.line(glow, glow_color, q1, q2, 4)
+        # Subtle flower-tinted edge color
+        tint_strength = max(0.0, min(1.0, mood)) * 0.35
 
-    def draw_quad_wire(self, surface, glow, pts, args, depth_factor=1.0):
+        flower_tint = (
+            int(140 * tint_strength),   # warm red
+            int(180 * tint_strength),   # soft green
+            int(220 * tint_strength),   # cool blue
+        )
+
+        core_color = (
+            clamp((EDGE_BASE[0] + flower_tint[0]) * depth_factor),
+            clamp((EDGE_BASE[1] + flower_tint[1]) * depth_factor),
+            clamp((EDGE_BASE[2] + flower_tint[2]) * depth_factor),
+        )
+
+
+        # Core edge (thin)
+        pygame.draw.line(surface, core_color, q1, q2, 1)
+
+        # Glow edge (soft + depth based)
+        alpha = int((50 + 90 * tint_strength) * depth_factor)
+        glow_color = (
+            clamp(core_color[0] + 40),
+            clamp(core_color[1] + 60),
+            clamp(core_color[2] + 90),
+            clamp(alpha)
+        )
+        pygame.draw.line(glow, glow_color, q1, q2, 6)
+
+    def draw_quad_wire(self, surface, glow, pts, args, depth_factor=1.0, mood=0.0):
         for i in range(4):
             self.draw_edge(
                 surface,
@@ -47,13 +75,15 @@ class RoomRenderer:
                 pts[i],
                 pts[(i + 1) % 4],
                 args,
-                depth_factor
+                depth_factor,
+                mood
             )
 
     def draw(self, surface, head_x, head_y,
-             camera_pitch, camera_height,
-             eye_depth, near_clip, unit_scale,
-             width, height, world_to_camera):
+         camera_pitch, camera_height,
+         eye_depth, near_clip, unit_scale,
+         width, height, world_to_camera,
+         mood=0.0):
 
         self.glow.fill((0, 0, 0, 0))
         args = (
@@ -74,7 +104,7 @@ class RoomRenderer:
             Point3D( w, -h, d),
             Point3D(-w, -h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, floor, args, depth_factor=0.6)
+        self.draw_quad_wire(surface, self.glow, floor, args, depth_factor=0.6, mood=mood)
 
         # ---- CEILING (lighter) ----
         ceiling = [
@@ -83,7 +113,7 @@ class RoomRenderer:
             Point3D( w, h, d),
             Point3D(-w, h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, ceiling, args, depth_factor=0.8)
+        self.draw_quad_wire(surface, self.glow, ceiling, args, depth_factor=0.8, mood=mood)
 
         # ---- LEFT WALL ----
         left = [
@@ -92,7 +122,7 @@ class RoomRenderer:
             Point3D(-w,  h, d),
             Point3D(-w, -h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, left, args, depth_factor=0.7)
+        self.draw_quad_wire(surface, self.glow, left, args, depth_factor=0.7, mood=mood)
 
         # ---- RIGHT WALL ----
         right = [
@@ -101,16 +131,8 @@ class RoomRenderer:
             Point3D(w,  h, d),
             Point3D(w, -h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, right, args, depth_factor=0.7)
+        self.draw_quad_wire(surface, self.glow, right, args, depth_factor=0.7, mood=mood)
 
-        # ---- BACK WALL (dim, distant) ----
-        back = [
-            Point3D(-w, -h, d),
-            Point3D( w, -h, d),
-            Point3D( w,  h, d),
-            Point3D(-w,  h, d),
-        ]
-        self.draw_quad_wire(surface, self.glow, back, args, depth_factor=0.4)
 
         # ---- COMPOSITE GLOW ----
         surface.blit(self.glow, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)

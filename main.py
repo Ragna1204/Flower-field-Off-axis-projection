@@ -261,14 +261,15 @@ def main(debug_windowed=False):
         # Update flowers
         flower_field.update(dt, head_world_x, head_world_y, smile_strength)
 
-        # --- DRAW ROOM (fixed) ---
+        # --- DRAW ROOM ---
         renderer.draw(
             screen,
             head_world_x, head_world_y,
             camera_pitch, camera_height,
             eye_depth, near_clip, unit_scale,
             width, height,
-            world_to_camera
+            world_to_camera,
+            mood=smile_strength
         )
 
         # --- DRAW FLOWERS (fixed projection) ---
