@@ -2,122 +2,115 @@ import pygame
 from geometry import Point3D
 from projection import project_off_axis
 
-# Dark sci-fi grayscale base
-WALL_COLOR = (18, 18, 25)
-EDGE_NEON = (80, 120, 255)
+# ---- COLOR PALETTE ----
+WALL_BASE = (20, 22, 30)
+EDGE_BASE = (90, 130, 255)
 
 class RoomRenderer:
     def __init__(self, width, height):
         self.width = width
         self.height = height
 
-        # Room size (world units)
-        self.w = 3.5     # half width
-        self.h = 2.4     # half height
-        self.d = 10.0    # depth
+        # World dimensions
+        self.w = 3.5
+        self.h = 2.4
+        self.d = 10.0
 
-    def draw_plane(self, surface, head_x, head_y,
-                   camera_pitch, camera_height, eye_depth,
-                   near_clip, unit_scale, width, height, world_to_camera,
-                   p1, p2, p3, p4, color):
+        # Glow buffer
+        self.glow = pygame.Surface((width, height), pygame.SRCALPHA)
 
-        q1 = project_off_axis(p1, head_x, head_y,
-                              camera_pitch, camera_height,
-                              eye_depth, near_clip, unit_scale,
-                              width, height, world_to_camera)
+    def project(self, p, *args):
+        q = project_off_axis(p, *args)
+        if q and len(q) >= 2:
+            return (q[0], q[1])
+        return None
 
-        q2 = project_off_axis(p2, head_x, head_y,
-                              camera_pitch, camera_height,
-                              eye_depth, near_clip, unit_scale,
-                              width, height, world_to_camera)
-
-        q3 = project_off_axis(p3, head_x, head_y,
-                              camera_pitch, camera_height,
-                              eye_depth, near_clip, unit_scale,
-                              width, height, world_to_camera)
-
-        q4 = project_off_axis(p4, head_x, head_y,
-                              camera_pitch, camera_height,
-                              eye_depth, near_clip, unit_scale,
-                              width, height, world_to_camera)
-
-        if not (q1 and q2 and q3 and q4):
+    def draw_edge(self, surface, glow, p1, p2, args, depth_factor=1.0):
+        q1 = self.project(p1, *args)
+        q2 = self.project(p2, *args)
+        if not q1 or not q2:
             return
 
-        # ensure we have just coordinate pairs
-        if isinstance(q1, (tuple, list)) and len(q1) >= 2:
-            q1 = (q1[0], q1[1])
-        if isinstance(q2, (tuple, list)) and len(q2) >= 2:
-            q2 = (q2[0], q2[1])
-        if isinstance(q3, (tuple, list)) and len(q3) >= 2:
-            q3 = (q3[0], q3[1])
-        if isinstance(q4, (tuple, list)) and len(q4) >= 2:
-            q4 = (q4[0], q4[1])
+        # Core edge
+        pygame.draw.line(surface, EDGE_BASE, q1, q2, 1)
 
-        pygame.draw.polygon(surface, color, [q1, q2, q3, q4])
+        # Glow edge (thicker + softer)
+        alpha = int(30 * depth_factor)
+        glow_color = (*EDGE_BASE, alpha)
+        pygame.draw.line(glow, glow_color, q1, q2, 4)
 
-        # Neon sci-fi edges
-        pygame.draw.line(surface, EDGE_NEON, q1, q2, 2)
-        pygame.draw.line(surface, EDGE_NEON, q2, q3, 2)
-        pygame.draw.line(surface, EDGE_NEON, q3, q4, 2)
-        pygame.draw.line(surface, EDGE_NEON, q4, q1, 2)
+    def draw_quad_wire(self, surface, glow, pts, args, depth_factor=1.0):
+        for i in range(4):
+            self.draw_edge(
+                surface,
+                glow,
+                pts[i],
+                pts[(i + 1) % 4],
+                args,
+                depth_factor
+            )
 
     def draw(self, surface, head_x, head_y,
              camera_pitch, camera_height,
              eye_depth, near_clip, unit_scale,
              width, height, world_to_camera):
 
-        w = self.w
-        h = self.h
-        d = self.d
+        self.glow.fill((0, 0, 0, 0))
+        args = (
+            head_x, head_y,
+            camera_pitch, camera_height,
+            eye_depth, near_clip,
+            unit_scale,
+            width, height,
+            world_to_camera
+        )
 
-        # ---------- FLOOR ----------
-        self.draw_plane(surface, head_x, head_y,
-                        camera_pitch, camera_height, eye_depth,
-                        near_clip, unit_scale, width, height, world_to_camera,
-                        Point3D(-w, -h, 0),
-                        Point3D( w, -h, 0),
-                        Point3D( w, -h, d),
-                        Point3D(-w, -h, d),
-                        WALL_COLOR)
+        w, h, d = self.w, self.h, self.d
 
-        # ---------- CEILING ----------
-        self.draw_plane(surface, head_x, head_y,
-                        camera_pitch, camera_height, eye_depth,
-                        near_clip, unit_scale, width, height, world_to_camera,
-                        Point3D(-w, h, 0),
-                        Point3D( w, h, 0),
-                        Point3D( w, h, d),
-                        Point3D(-w, h, d),
-                        WALL_COLOR)
+        # ---- FLOOR (darker, heavier) ----
+        floor = [
+            Point3D(-w, -h, 0),
+            Point3D( w, -h, 0),
+            Point3D( w, -h, d),
+            Point3D(-w, -h, d),
+        ]
+        self.draw_quad_wire(surface, self.glow, floor, args, depth_factor=0.6)
 
-        # ---------- LEFT WALL ----------
-        self.draw_plane(surface, head_x, head_y,
-                        camera_pitch, camera_height, eye_depth,
-                        near_clip, unit_scale, width, height, world_to_camera,
-                        Point3D(-w, -h, 0),
-                        Point3D(-w,  h, 0),
-                        Point3D(-w,  h, d),
-                        Point3D(-w, -h, d),
-                        WALL_COLOR)
+        # ---- CEILING (lighter) ----
+        ceiling = [
+            Point3D(-w, h, 0),
+            Point3D( w, h, 0),
+            Point3D( w, h, d),
+            Point3D(-w, h, d),
+        ]
+        self.draw_quad_wire(surface, self.glow, ceiling, args, depth_factor=0.8)
 
-        # ---------- RIGHT WALL ----------
-        self.draw_plane(surface, head_x, head_y,
-                        camera_pitch, camera_height, eye_depth,
-                        near_clip, unit_scale, width, height, world_to_camera,
-                        Point3D(w, -h, 0),
-                        Point3D(w,  h, 0),
-                        Point3D(w,  h, d),
-                        Point3D(w, -h, d),
-                        WALL_COLOR)
+        # ---- LEFT WALL ----
+        left = [
+            Point3D(-w, -h, 0),
+            Point3D(-w,  h, 0),
+            Point3D(-w,  h, d),
+            Point3D(-w, -h, d),
+        ]
+        self.draw_quad_wire(surface, self.glow, left, args, depth_factor=0.7)
 
-        # ---------- BACK WALL ----------
-        self.draw_plane(surface, head_x, head_y,
-                        camera_pitch, camera_height, eye_depth,
-                        near_clip, unit_scale, width, height, world_to_camera,
-                        Point3D(-w, -h, d),
-                        Point3D( w, -h, d),
-                        Point3D( w,  h, d),
-                        Point3D(-w,  h, d),
-                        WALL_COLOR)
+        # ---- RIGHT WALL ----
+        right = [
+            Point3D(w, -h, 0),
+            Point3D(w,  h, 0),
+            Point3D(w,  h, d),
+            Point3D(w, -h, d),
+        ]
+        self.draw_quad_wire(surface, self.glow, right, args, depth_factor=0.7)
 
+        # ---- BACK WALL (dim, distant) ----
+        back = [
+            Point3D(-w, -h, d),
+            Point3D( w, -h, d),
+            Point3D( w,  h, d),
+            Point3D(-w,  h, d),
+        ]
+        self.draw_quad_wire(surface, self.glow, back, args, depth_factor=0.4)
+
+        # ---- COMPOSITE GLOW ----
+        surface.blit(self.glow, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
