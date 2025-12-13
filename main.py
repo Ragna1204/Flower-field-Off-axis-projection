@@ -221,6 +221,8 @@ def main(debug_windowed=False):
     clock = pygame.time.Clock()
     fps = 60
 
+    glow_surface = pygame.Surface((width, height), pygame.SRCALPHA)
+
     tracker = HandTracking()
     renderer = RoomRenderer(width, height)
     flower_field = FlowerField(lanes=12, lane_y=-1.35, depth_layers=14)
@@ -240,6 +242,7 @@ def main(debug_windowed=False):
                 running = False
 
         screen.fill((10, 10, 10))
+        glow_surface.fill((0, 0, 0, 0))
 
         # --- Head Tracking ---
         raw_x = tracker.head_x if tracker.detected else 0.0
@@ -283,7 +286,9 @@ def main(debug_windowed=False):
             screen_size=(width, height)
         )
 
-
+        # --- APPLY GLOW ---
+        screen.blit(glow_surface, (0, 0), special_flags=pygame.BLEND_ADD)
+        
         pygame.display.flip()
 
     tracker.stop()
