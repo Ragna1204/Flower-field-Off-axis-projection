@@ -113,7 +113,12 @@ class Flower:
 
     def __init__(self, x: float, y: float, z: float, size: float = 0.3, hue: float = 0.0):
         self.x = x
+
+        self.base_y = y
         self.y = y
+        self.breath_offset = 0.0
+        self._time = random.uniform(0, math.pi * 2)
+
         self.z = z
         self.size = size
         self.hue = hue
@@ -123,6 +128,12 @@ class Flower:
         """Advance color progress toward `progress` (0..1)."""
         speed = 5.0  # responsiveness
         self.color_progress = lerp(self.color_progress, progress, 1 - math.exp(-speed * dt))
+        # --- breathing motion (offset only, not absolute y) ---
+        self._time += dt
+
+        depth_factor = max(0.0, 1.0 - self.z / 10.0)
+        self.breath_offset = math.sin(self._time * 1.1 + self.x * 2.0) * 0.02 * depth_factor
+
 
     def draw(
         self,
@@ -290,6 +301,7 @@ class FlowerField:
             f.update(dt, per_target)
             depth_norm = min(1.0, f.z / self.depth_repeat)
             f.y = self.lane_y * (1 - 0.35 * depth_norm)
+            f.y += f.breath_offset
 
     def draw(self, surface: pygame.Surface, project_fn, head_x: float, head_y: float, screen_size=None) -> None:
         """Draw flowers sorted by camera-space depth (far to near) for correct occlusion.
