@@ -287,7 +287,7 @@ def main(debug_windowed=False):
         )
 
         # --- FOG DIFFUSION / BLOOM ---
-        fog = pygame.transform.smoothscale(glow_surface, (width // 2, height // 2))
+        fog = pygame.transform.smoothscale(glow_surface, (width // 3, height // 3))
         fog = pygame.transform.smoothscale(fog, (width, height))
 
         screen.blit(fog, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)

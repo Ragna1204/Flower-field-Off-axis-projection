@@ -179,7 +179,8 @@ class Flower:
         # ---- VOLUMETRIC FOG HALO ----
         fog_radius = int(draw_size * 1.35)
 
-        fog_alpha = int(18 + 42 * fog_strength)
+        fog_alpha = int(10 + 60 * (1 - flattened) ** 1.8)
+        fog_alpha = max(5, min(70, fog_alpha))
 
         fog_rgb = self.hsv_to_rgb(self.hue, 0.35, 0.9)
         fog_color = tuple(int(c * 0.6) for c in fog_rgb)
