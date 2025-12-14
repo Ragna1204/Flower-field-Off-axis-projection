@@ -269,7 +269,7 @@ def main(debug_windowed=False):
             eye_depth, near_clip, unit_scale,
             width, height,
             world_to_camera,
-            mood=smile_strength
+            energy=smile_strength
         )
 
         # --- DRAW FLOWERS (fixed projection) ---

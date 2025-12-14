@@ -4,10 +4,18 @@ from projection import project_off_axis
 
 # ---- COLOR PALETTE ----
 WALL_BASE = (20, 22, 30)
-EDGE_BASE = (90, 130, 255)
+EDGE_BASE = (70, 100, 200)
 
 def clamp(v, lo=0, hi=255):
     return max(lo, min(hi, int(v)))
+
+def edge_variation(p1, p2):
+    """Stable pseudo-random variation based on edge geometry"""
+    seed = int(
+        (p1.x * 13 + p1.y * 17 + p1.z * 19 +
+         p2.x * 23 + p2.y * 29 + p2.z * 31) * 1000
+    )
+    return 0.7 + (seed % 100) / 300.0  # range ~0.7 → 1.03
 
 
 class RoomRenderer:
@@ -32,7 +40,17 @@ class RoomRenderer:
             return (q[0], q[1])
         return None
 
-    def draw_edge(self, surface, glow, fog, p1, p2, proj_args, depth_factor=1.0, mood=0.0):
+    def draw_edge(
+        self,
+        surface,
+        glow,
+        fog,
+        p1,
+        p2,
+        proj_args,      # <-- ALWAYS tuple
+        depth_factor=1.0,
+        energy=0.0      # <-- rename mood → energy
+    ):
         q1 = self.project(p1, *proj_args)
         q2 = self.project(p2, *proj_args)
         if not q1 or not q2:
@@ -40,10 +58,13 @@ class RoomRenderer:
 
         # ---- Clamp inputs ----
         depth_factor = max(0.05, min(1.0, depth_factor))
-        mood = max(0.0, min(1.0, mood))
+        energy = max(0.0, min(1.0, energy))
+
+
+        variation = edge_variation(p1, p2)
 
         # ---- Flower-tinted edge color ----
-        tint_strength = mood * 0.35
+        tint_strength = energy * 0.2
 
         flower_tint = (
             int(140 * tint_strength),
@@ -51,17 +72,19 @@ class RoomRenderer:
             int(220 * tint_strength),
         )
 
+        intensity = depth_factor * variation
+
         core_color = (
-            clamp((EDGE_BASE[0] + flower_tint[0]) * depth_factor),
-            clamp((EDGE_BASE[1] + flower_tint[1]) * depth_factor),
-            clamp((EDGE_BASE[2] + flower_tint[2]) * depth_factor),
+            clamp((EDGE_BASE[0] + flower_tint[0]) * intensity),
+            clamp((EDGE_BASE[1] + flower_tint[1]) * intensity),
+            clamp((EDGE_BASE[2] + flower_tint[2]) * intensity),
         )
 
         # ---- CORE EDGE ----
         pygame.draw.line(surface, core_color, q1, q2, 1)
 
         # ---- GLOW EDGE ----
-        glow_alpha = int((40 + 80 * tint_strength) * depth_factor)
+        glow_alpha = int((20 + 40 * tint_strength) * intensity)
         glow_color = (
             clamp(core_color[0] + 40),
             clamp(core_color[1] + 60),
@@ -72,7 +95,7 @@ class RoomRenderer:
 
         # ---- DEPTH FOG (THIS WAS MISSING) ----
         fog_strength = (1.0 - depth_factor) ** 1.6
-        fog_alpha = int(60 * fog_strength)
+        fog_alpha = int(25 * (1.0 - depth_factor) * energy)
 
         if fog_alpha > 0:
             fog_color = (
@@ -88,10 +111,9 @@ class RoomRenderer:
         glow,
         fog,
         pts,
-        *,
         proj_args,
         depth_factor=1.0,
-        mood=0.0
+        energy=0.0
     ):
         for i in range(4):
             self.draw_edge(
@@ -102,14 +124,15 @@ class RoomRenderer:
                 pts[(i + 1) % 4],
                 proj_args,
                 depth_factor,
-                mood
+                energy
             )
+
 
     def draw(self, surface, head_x, head_y,
          camera_pitch, camera_height,
          eye_depth, near_clip, unit_scale,
          width, height, world_to_camera,
-         mood=0.0):
+         energy=0.0):
         
         self.fog.fill((0, 0, 0, 0))
 
@@ -132,7 +155,7 @@ class RoomRenderer:
             Point3D( w, -h, d),
             Point3D(-w, -h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, self.fog, floor, proj_args=proj_args, depth_factor=0.6, mood=mood)
+        self.draw_quad_wire(surface, self.glow, self.fog, floor, proj_args=proj_args, depth_factor=0.6, energy=energy)
 
         # ---- CEILING (lighter) ----
         ceiling = [
@@ -141,7 +164,7 @@ class RoomRenderer:
             Point3D( w, h, d),
             Point3D(-w, h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, self.fog, ceiling, proj_args=proj_args, depth_factor=0.8, mood=mood)
+        self.draw_quad_wire(surface, self.glow, self.fog, ceiling, proj_args=proj_args, depth_factor=0.8, energy=energy)
 
         # ---- LEFT WALL ----
         left = [
@@ -150,7 +173,7 @@ class RoomRenderer:
             Point3D(-w,  h, d),
             Point3D(-w, -h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, self.fog, left, proj_args=proj_args, depth_factor=0.7, mood=mood)
+        self.draw_quad_wire(surface, self.glow, self.fog, left, proj_args=proj_args, depth_factor=0.7, energy=energy)
 
         # ---- RIGHT WALL ----
         right = [
@@ -159,7 +182,7 @@ class RoomRenderer:
             Point3D(w,  h, d),
             Point3D(w, -h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, self.fog, right, proj_args=proj_args, depth_factor=0.7, mood=mood)
+        self.draw_quad_wire(surface, self.glow, self.fog, right, proj_args=proj_args, depth_factor=0.7, energy=energy)
 
 
         # ---- COMPOSITE GLOW ----
