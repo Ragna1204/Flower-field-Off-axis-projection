@@ -257,30 +257,44 @@ def main(debug_windowed=False):
         head_world_x += (target_x - head_world_x) * HEAD_SMOOTH
         head_world_y += (target_y - head_world_y) * HEAD_SMOOTH
 
-        # Smile detection
-        smile_detector.update(getattr(tracker, 'landmarks', None))
-        smile_strength = smile_detector.smile_strength
 
-        # --- FACE PRESENCE + SMILE GATING ---
-        if not tracker.detected:
-            smile_strength = 0.0
-        else:
-            # suppress neutral face
-            if smile_strength < 0.55:
-                smile_strength = 0.0
+        
 
-        # --- ROOM ENERGY SMOOTHING (C3.4 CORE) ---
-        target_energy = smile_strength  # raw signal (0..1)
+        # # Smile detection
+        # smile_detector.update(getattr(tracker, 'landmarks', None))
+        # smile_strength = smile_detector.smile_strength
 
-        ENERGY_RISE = 0.04   # how fast room reacts to smile
-        ENERGY_FALL = 0.015 # how slowly it calms down
+        # # --- FACE PRESENCE + SMILE GATING ---
+        # if not tracker.detected:
+        #     smile_strength = 0.0
+        # else:
+        #     # suppress neutral face
+        #     if smile_strength < 0.55:
+        #         smile_strength = 0.0
 
-        if target_energy > room_energy:
-            room_energy += (target_energy - room_energy) * ENERGY_RISE
-        else:
-            room_energy += (target_energy - room_energy) * ENERGY_FALL
+        # # --- ROOM ENERGY SMOOTHING (C3.4 CORE) ---
+        # target_energy = smile_strength  # raw signal (0..1)
 
+        # ENERGY_RISE = 0.04   # how fast room reacts to smile
+        # ENERGY_FALL = 0.015 # how slowly it calms down
+
+        # if target_energy > room_energy:
+        #     room_energy += (target_energy - room_energy) * ENERGY_RISE
+        # else:
+        #     room_energy += (target_energy - room_energy) * ENERGY_FALL
+
+        # room_energy = max(0.0, min(1.0, room_energy))
+
+        # --- PHASE C: TEMPORARY ENERGY DRIVER ---
+        t = pygame.time.get_ticks() * 0.001
+
+        room_energy = 0.35 + 0.15 * math.sin(t * 0.6)
         room_energy = max(0.0, min(1.0, room_energy))
+
+        smile_strength = room_energy
+
+
+
 
         # Update flowers
         flower_field.update(dt, head_world_x, head_world_y, room_energy)

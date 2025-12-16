@@ -35,6 +35,10 @@ class RoomRenderer:
 
 
     def project(self, p, *args):
+        # Subtle parallax exaggeration (depth only)
+        parallax = 1.0 + (p.z / self.d) * 0.04
+        p = Point3D(p.x * parallax, p.y, p.z)
+
         q = project_off_axis(p, *args)
         if q and len(q) >= 2:
             return (q[0], q[1])
@@ -82,6 +86,17 @@ class RoomRenderer:
 
         # ---- CORE EDGE ----
         pygame.draw.line(surface, core_color, q1, q2, 1)
+        pygame.draw.line(surface, core_color, q1, q2, 1)
+
+        # ---- STATIC ARCHITECTURAL ACCENT (always on) ----
+        accent_alpha = int(10 * intensity)
+        accent_color = (
+            clamp(EDGE_BASE[0] + 20),
+            clamp(EDGE_BASE[1] + 30),
+            clamp(EDGE_BASE[2] + 40),
+            accent_alpha
+        )
+        pygame.draw.line(glow, accent_color, q1, q2, 2)
 
         # ---- GLOW EDGE ----
         glow_alpha = int((20 + 40 * tint_strength) * intensity)
@@ -91,7 +106,7 @@ class RoomRenderer:
             clamp(core_color[2] + 90),
             glow_alpha
         )
-        pygame.draw.line(glow, glow_color, q1, q2, 6)
+        pygame.draw.line(glow, glow_color, q1, q2, 4)
 
         # ---- DEPTH FOG (THIS WAS MISSING) ----
         fog_strength = (1.0 - depth_factor) ** 1.6
@@ -167,6 +182,8 @@ class RoomRenderer:
          width, height, world_to_camera,
          energy=0.0):
         
+        energy = 0
+        
         self.fog.fill((0, 0, 0, 0))
 
         self.glow.fill((0, 0, 0, 0))
@@ -188,7 +205,7 @@ class RoomRenderer:
             Point3D( w, -h, d),
             Point3D(-w, -h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, self.fog, floor, proj_args=proj_args, depth_factor=0.6, energy=energy)
+        self.draw_quad_wire(surface, self.glow, self.fog, floor, proj_args=proj_args, depth_factor=0.45, energy=energy)
 
         # ---- CEILING (lighter) ----
         ceiling = [
@@ -206,7 +223,7 @@ class RoomRenderer:
             Point3D(-w,  h, d),
             Point3D(-w, -h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, self.fog, left, proj_args=proj_args, depth_factor=0.7, energy=energy)
+        self.draw_quad_wire(surface, self.glow, self.fog, left, proj_args=proj_args, depth_factor=0.6, energy=energy)
 
         # ---- RIGHT WALL ----
         right = [
@@ -215,7 +232,47 @@ class RoomRenderer:
             Point3D(w,  h, d),
             Point3D(w, -h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, self.fog, right, proj_args=proj_args, depth_factor=0.7, energy=energy)
+        self.draw_quad_wire(surface, self.glow, self.fog, right, proj_args=proj_args, depth_factor=0.6, energy=energy)
+
+        # ---- BACK WALL (farthest plane) ----
+        back = [
+            Point3D(-w, -h, d),
+            Point3D( w, -h, d),
+            Point3D( w,  h, d),
+            Point3D(-w,  h, d),
+        ]
+        self.draw_quad_wire(surface, self.glow, self.fog, back, proj_args=proj_args, depth_factor=0.9, energy=energy)
+
+
+        # ---- WALL RIBS (architectural detail) ----
+        rib_spacing = 0.7
+        z = 0.0
+        while z <= d:
+            # Left wall ribs
+            self.draw_edge(
+                surface,
+                self.glow,
+                self.fog,
+                Point3D(-w, -h, z),
+                Point3D(-w,  h, z),
+                proj_args,
+                depth_factor=0.55,
+                energy=energy
+            )
+
+            # Right wall ribs
+            self.draw_edge(
+                surface,
+                self.glow,
+                self.fog,
+                Point3D(w, -h, z),
+                Point3D(w,  h, z),
+                proj_args,
+                depth_factor=0.55,
+                energy=energy
+            )
+
+            z += rib_spacing
 
 
         # ---- COMPOSITE GLOW ----
@@ -231,6 +288,6 @@ class RoomRenderer:
             (self.width, self.height)
         )
 
-        surface.blit(fog_blur, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+        # surface.blit(fog_blur, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
         surface.blit(self.glow, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
-        self.draw_room_fog(surface, energy)
+        # self.draw_room_fog(surface, energy)

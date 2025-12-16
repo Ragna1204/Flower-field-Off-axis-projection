@@ -124,15 +124,35 @@ class Flower:
         self.hue = hue
         self.color_progress = 0.0
 
+        self._time = random.uniform(0, 10.0)  # de-sync flowers
+        self.breath_offset = 0.0
+
     def update(self, dt: float, progress: float) -> None:
-        """Advance color progress toward `progress` (0..1)."""
-        speed = 5.0  # responsiveness
-        self.color_progress = lerp(self.color_progress, progress, 1 - math.exp(-speed * dt))
-        # --- breathing motion (offset only, not absolute y) ---
+        """Advance color progress toward `progress` (0..1) and apply life motion."""
+        
+        # --- Color progression ---
+        speed = 5.0
+        self.color_progress = lerp(
+            self.color_progress,
+            progress,
+            1 - math.exp(-speed * dt)
+        )
+
+        # --- Internal time ---
         self._time += dt
 
+        # --- Depth weighting (near flowers move more) ---
         depth_factor = max(0.0, 1.0 - self.z / 10.0)
-        self.breath_offset = math.sin(self._time * 1.1 + self.x * 2.0) * 0.02 * depth_factor
+
+        # --- Energy-based breathing (IMPORTANT) ---
+        life = self.color_progress  # tie motion to life, not time
+
+        self.breath_offset = (
+            math.sin(self._time * 1.1 + self.x * 2.0)
+            * 0.02
+            * depth_factor
+            * life
+        )
 
 
     def draw(
