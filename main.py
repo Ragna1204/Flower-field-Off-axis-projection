@@ -31,6 +31,8 @@ HEAD_MAP_SCALE_X = 1.2   # maps normalized webcam (-1..1) to world units (left-r
 HEAD_MAP_SCALE_Y = 0.9   # maps normalized webcam (-1..1) to world units (up-down)
 HEAD_SMOOTH = 0.03        # smoothing factor (0..1) for exponential smoothing
 
+room_energy = 0.0 # energy level for room lighting (0..1)
+
 # Camera transformation helpers
 def world_to_camera(p, camera_pitch, camera_height):
     """Transform a world-space point into camera-space coordinates.
@@ -206,6 +208,7 @@ class GridRenderer:
 
 # Main application loop
 def main(debug_windowed=False):
+    global room_energy
     pygame.init()
     info = pygame.display.Info()
 
@@ -258,8 +261,29 @@ def main(debug_windowed=False):
         smile_detector.update(getattr(tracker, 'landmarks', None))
         smile_strength = smile_detector.smile_strength
 
+        # --- FACE PRESENCE + SMILE GATING ---
+        if not tracker.detected:
+            smile_strength = 0.0
+        else:
+            # suppress neutral face
+            if smile_strength < 0.55:
+                smile_strength = 0.0
+
+        # --- ROOM ENERGY SMOOTHING (C3.4 CORE) ---
+        target_energy = smile_strength  # raw signal (0..1)
+
+        ENERGY_RISE = 0.04   # how fast room reacts to smile
+        ENERGY_FALL = 0.015 # how slowly it calms down
+
+        if target_energy > room_energy:
+            room_energy += (target_energy - room_energy) * ENERGY_RISE
+        else:
+            room_energy += (target_energy - room_energy) * ENERGY_FALL
+
+        room_energy = max(0.0, min(1.0, room_energy))
+
         # Update flowers
-        flower_field.update(dt, head_world_x, head_world_y, smile_strength)
+        flower_field.update(dt, head_world_x, head_world_y, room_energy)
 
         # --- DRAW ROOM ---
         renderer.draw(
@@ -269,7 +293,7 @@ def main(debug_windowed=False):
             eye_depth, near_clip, unit_scale,
             width, height,
             world_to_camera,
-            energy=smile_strength
+            energy=room_energy
         )
 
         # --- DRAW FLOWERS (fixed projection) ---

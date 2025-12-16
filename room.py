@@ -127,6 +127,39 @@ class RoomRenderer:
                 energy
             )
 
+    def draw_room_fog(self, surface, energy):
+        """
+        Volumetric room fog that fills space.
+        Reacts softly to energy (smile).
+        """
+
+        if energy <= 0.01:
+            return
+
+        # Fog intensity scales gently with energy
+        fog_alpha = int(18 + 30 * energy)
+
+        # Cool neon mist color (NOT flower color yet)
+        fog_color = (50, 80, 160, fog_alpha)
+
+        # Create full-screen fog layer
+        fog_layer = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        fog_layer.fill(fog_color)
+
+        # Downscale → upscale for cheap volumetric blur
+        fog_small = pygame.transform.smoothscale(
+            fog_layer,
+            (self.width // 3, self.height // 3)
+        )
+        fog_blur = pygame.transform.smoothscale(
+            fog_small,
+            (self.width, self.height)
+        )
+
+        # Additive blend so it feels like light in air
+        surface.blit(fog_blur, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+
+
 
     def draw(self, surface, head_x, head_y,
          camera_pitch, camera_height,
@@ -200,3 +233,4 @@ class RoomRenderer:
 
         surface.blit(fog_blur, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
         surface.blit(self.glow, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+        self.draw_room_fog(surface, energy)
