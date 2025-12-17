@@ -33,6 +33,20 @@ HEAD_SMOOTH = 0.03        # smoothing factor (0..1) for exponential smoothing
 
 room_energy = 0.0 # energy level for room lighting (0..1)
 
+# ---- WORLD STATE ----
+WORLD_DORMANT = 0      # before smile
+WORLD_AWAKENING = 1   # after smile, time-based
+WORLD_ALIVE = 2       # fully awakened
+
+world_state = WORLD_DORMANT
+awakening_time = 0.0
+intro_time = 0.0
+
+# ---- AWAKENING TIMING ----
+INTRO_DELAY = 5.0          # seconds before smile is allowed
+AWAKEN_DURATION = 12.0     # seconds for full awakening
+
+
 # Camera transformation helpers
 def world_to_camera(p, camera_pitch, camera_height):
     """Transform a world-space point into camera-space coordinates.
@@ -62,6 +76,10 @@ def camera_depth_for_point(p, camera_pitch, camera_height):
     """
     x_cam, y_cam, z_cam = world_to_camera(p, camera_pitch, camera_height)
     return z_cam, eye_depth + z_cam
+
+def ease(t):
+    return t * t * (3 - 2 * t)  # smoothstep
+
 
 
 # Tracking engine
@@ -208,7 +226,7 @@ class GridRenderer:
 
 # Main application loop
 def main(debug_windowed=False):
-    global room_energy
+    global room_energy, world_state, awakening_time, intro_time
     pygame.init()
     info = pygame.display.Info()
 
@@ -237,6 +255,7 @@ def main(debug_windowed=False):
     running = True
     while running:
         dt = clock.tick(fps) / 1000.0
+        intro_time += dt
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -258,40 +277,35 @@ def main(debug_windowed=False):
         head_world_y += (target_y - head_world_y) * HEAD_SMOOTH
 
 
+
+        # ---- ONE-TIME SMILE TRIGGER ----
+        smile_detector.update(getattr(tracker, 'landmarks', None))
         
+        if world_state == WORLD_DORMANT:
+            if intro_time >= INTRO_DELAY:
+                if tracker.detected and smile_detector.smile_strength > 0.6:
+                    world_state = WORLD_AWAKENING
+                    awakening_time = 0.0
 
-        # # Smile detection
-        # smile_detector.update(getattr(tracker, 'landmarks', None))
-        # smile_strength = smile_detector.smile_strength
 
-        # # --- FACE PRESENCE + SMILE GATING ---
-        # if not tracker.detected:
-        #     smile_strength = 0.0
-        # else:
-        #     # suppress neutral face
-        #     if smile_strength < 0.55:
-        #         smile_strength = 0.0
+        if world_state == WORLD_AWAKENING:
+            awakening_time += dt
+            if awakening_time >= AWAKEN_DURATION:
+                awakening_time = AWAKEN_DURATION
+                world_state = WORLD_ALIVE
 
-        # # --- ROOM ENERGY SMOOTHING (C3.4 CORE) ---
-        # target_energy = smile_strength  # raw signal (0..1)
 
-        # ENERGY_RISE = 0.04   # how fast room reacts to smile
-        # ENERGY_FALL = 0.015 # how slowly it calms down
+        # ---- PHASE D4: TIME-BASED ENERGY ----
+        if world_state == WORLD_DORMANT:
+            room_energy = 0.0
 
-        # if target_energy > room_energy:
-        #     room_energy += (target_energy - room_energy) * ENERGY_RISE
-        # else:
-        #     room_energy += (target_energy - room_energy) * ENERGY_FALL
+        elif world_state == WORLD_AWAKENING:
+            # 12 seconds = full awakening (tweak later)
+            room_energy = ease(min(awakening_time / 12.0, 1.0))
 
-        # room_energy = max(0.0, min(1.0, room_energy))
+        else:  # WORLD_ALIVE
+            room_energy = 1.0
 
-        # --- PHASE C: TEMPORARY ENERGY DRIVER ---
-        t = pygame.time.get_ticks() * 0.001
-
-        room_energy = 0.35 + 0.15 * math.sin(t * 0.6)
-        room_energy = max(0.0, min(1.0, room_energy))
-
-        smile_strength = room_energy
 
 
 

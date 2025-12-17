@@ -145,7 +145,7 @@ class Flower:
         depth_factor = max(0.0, 1.0 - self.z / 10.0)
 
         # --- Energy-based breathing (IMPORTANT) ---
-        life = self.color_progress  # tie motion to life, not time
+        life = self.life  # tie motion to life, not time
 
         self.breath_offset = (
             math.sin(self._time * 1.1 + self.x * 2.0)
@@ -196,46 +196,52 @@ class Flower:
         draw_size = int(self.size * flattened * 105)
         draw_size = max(1, draw_size)
 
-        # ---- VOLUMETRIC FOG HALO ----
-        fog_radius = int(draw_size * 1.35)
+        # ---- VOLUMETRIC FOG HALO (WAVE-GATED) ----
+        life = self.life  # IMPORTANT: per-flower wave life
 
-        fog_alpha = int(10 + 60 * (1 - flattened) ** 1.8)
-        fog_alpha = max(5, min(70, fog_alpha))
+        fog_strength = life ** 1.4
+        fog_alpha = int((10 + 60 * (1 - flattened) ** 1.8) * fog_strength)
+        fog_alpha = max(0, min(70, fog_alpha))
 
-        fog_rgb = self.hsv_to_rgb(self.hue, 0.35, 0.9)
-        fog_color = tuple(int(c * 0.6) for c in fog_rgb)
+        if fog_alpha > 0:
+            fog_radius = int(draw_size * (1.0 + 0.35 * life))
 
-        pygame.draw.circle(glow_surface, (*fog_color, fog_alpha), (sx, sy), fog_radius)
+            fog_rgb = self.hsv_to_rgb(self.hue, 0.35, 0.9)
+            fog_color = tuple(
+                int(lerp(60, c * 0.6, life))
+                for c in fog_rgb
+            )
 
-
-        # 5. Base gray colors
+            pygame.draw.circle(
+                glow_surface,
+                (*fog_color, fog_alpha),
+                (sx, sy),
+                fog_radius
+            )
+        # ---- FLOWER COLORS ----
         gray_center = (200, 200, 200)
         gray_petal  = (160, 160, 160)
 
-        # 6. Fully-colored hue version blended by color_progress
         rgb_color = self.hsv_to_rgb(self.hue, 0.75, 0.92)
-
-        # ---- DEPTH-BASED PETAL GLOW ----
         depth_glow = max(0.4, scale ** 0.6)
 
         petal_color = tuple(
-            int(lerp(gray_petal[i], rgb_color[i], self.color_progress) * depth_glow)
+            int(
+                lerp(gray_petal[i], rgb_color[i], life)
+                * depth_glow
+                * life
+            )
             for i in range(3)
         )
 
         center_color = tuple(
-            int(lerp(gray_center[i], (255, 230, 120)[i], self.color_progress))
+            int(
+                lerp(gray_center[i], (255, 230, 120)[i], life ** 1.3)
+            )
             for i in range(3)
         )
 
-        # 7. Depth-based fade (AFTER colors are computed)
-        depth_fade = min(1.0, flattened * 1.2)
 
-        petal_color = tuple(int(c * depth_fade) for c in petal_color)
-        center_color = tuple(int(c * depth_fade) for c in center_color)
-
-
-        # 7. Draw petals around center
         offsets = [(-0.4, 0), (0.4, 0), (0, -0.35), (0, 0.35)]
         for ox, oy in offsets:
             ox_pix = int(ox * draw_size)
@@ -299,6 +305,8 @@ class FlowerField:
         self.depth_repeat = depth_repeat
         self.flowers: List[Flower] = []
         self.color_progress = 0.0
+        self.life = 0.0  # per-flower wave life (0..1)
+
 
         # center lanes across X and create a few depth layers per lane
         x_start = -(lanes - 1) / 2.0 * spacing
@@ -319,26 +327,71 @@ class FlowerField:
         if len(self.flowers) > FLOWER_DRAW_LIMIT:
             self.flowers = self.flowers[:FLOWER_DRAW_LIMIT]
 
-    def update(self, dt: float, head_x: float, head_y: float, smile_strength: float) -> None:
-        # target color progress driven by smile strength
-        target = max(0.0, min(1.0, smile_strength))
-        # smooth global progress
-        speed = 1.0 / max(0.001, COLOR_TRANSITION_TIME)
-        self.color_progress = lerp(self.color_progress, target, 1 - math.exp(-speed * dt))
+    def update(self, dt: float, head_x: float, head_y: float, world_energy: float) -> None:
+        """
+        world_energy goes from 0 → 1 over awakening.
+        A radial wave propagates from front-center into the field.
+        """
 
-        # update each flower with the eased progress but weighted by depth so
-        # near flowers light up first
-        eased = COLOR_EASING(self.color_progress)
+        # ---- Wave tuning ----
+        WAVE_WIDTH = 0.9
+        RIPPLE_STRENGTH = 0.08
+        RIPPLE_FREQ = 1.2
+
+        # Convert energy to wave-front distance
+        wave_front = world_energy * self.depth_repeat * 1.2
+
+        origin_x = 0.0
+        origin_z = 0.0
+
+        max_x = max(0.001, (self.lanes - 1) * self.spacing * 0.5)
+
         for f in self.flowers:
-            # depth priority: 1 for z=0 (near), 0 for z=depth_repeat (far)
-            depth_priority = max(0.0, min(1.0, 1.0 - (f.z / max(1e-6, self.depth_repeat))))
-            # per-flower target scales eased progress by depth priority to light
-            # nearer flowers earlier
-            per_target = eased * (0.3 + 0.7 * depth_priority)
-            f.update(dt, per_target)
+            # ---- Normalized distance from wave origin ----
+            dx = (f.x - origin_x) / max_x
+            dz = (f.z - origin_z) / self.depth_repeat
+
+            distance = math.sqrt(dx * dx + dz * dz)
+
+            # ---- Wave envelope ----
+            raw = (wave_front - distance * self.depth_repeat) / WAVE_WIDTH
+            life_target = max(0.0, min(1.0, raw))
+
+            # ---- Secondary echo wave ----
+            echo = max(
+                0.0,
+                min(
+                    1.0,
+                    (wave_front - distance * self.depth_repeat - 1.5) / 1.2
+                )
+            )
+
+            life_target = max(life_target, echo * 0.35)
+
+            # ---- Gentle ripple on crest ----
+            ripple = RIPPLE_STRENGTH * math.sin(
+                f.z * RIPPLE_FREQ - world_energy * 6.0
+            )
+
+            life_target += ripple
+
+            # ---- Final clamp ----
+            life_target = max(0.0, min(1.0, life_target))
+
+            # ---- Sharper crest, softer tail ----
+            life_target = life_target ** 1.4
+
+
+            # ---- Store per-flower life ----
+            f.life = life_target
+
+            # ---- Update flower internals ----
+            f.update(dt, life_target)
+
             depth_norm = min(1.0, f.z / self.depth_repeat)
             f.y = self.lane_y * (1 - 0.35 * depth_norm)
             f.y += f.breath_offset
+
 
     def draw(
         self,
