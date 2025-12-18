@@ -133,11 +133,17 @@ class Flower:
         self.stem_curve = random.uniform(0.6, 1.0)
         self.stem_twist = random.choice([-1, 1])
 
+        # ---- Rose geometry parameters ----
         self.rose_layers = 4          # number of petal rings
         self.rose_points = 20         # resolution per ring
         self.rose_radius = 0.12       # base size (3D units)
         self.rose_height = 0.04       # vertical spread
         self.rose_twist = random.uniform(0, math.pi * 2)
+
+        self.rose_inward_bias = 0.22      # how much edge roses lean inward
+        self.rose_depth_lift = 0.18       # vertical stacking illusion
+        self.rose_edge_compress = 0.35    # radius compression at extreme X
+
 
 
 
@@ -499,7 +505,71 @@ class Flower:
         petal_rgb,
         thickness
     ):
-        pass
+        
+        # Normalized lateral position (−1 … 0 … +1)
+        field_half_width = 0.5 * (self.field_width if hasattr(self, "field_width") else 10.0)
+        x_norm = max(-1.0, min(1.0, self.x / field_half_width))
+        edge_factor = abs(x_norm)
+
+        life = self.life
+        active_layers = max(1, int(self.rose_layers * life))
+
+        for layer in range(active_layers):
+            layer_t = layer / max(1, self.rose_layers - 1)
+
+            alpha = int(22 * (1.0 - layer_t * 0.6))
+            alpha = max(8, alpha)
+
+            radius = self.rose_base_radius * (1.0 + layer_t * 1.4)
+            # Perspective-aware compression near edges
+            radius *= (1.0 - edge_factor * self.rose_edge_compress)
+
+            height = layer_t * self.rose_height
+            rotation = self.rose_twist + layer * 0.9
+
+            points = []
+
+            for i in range(self.rose_points + 1):
+                t = i / self.rose_points
+                angle = t * math.pi * 2
+
+                # Petal deformation (key line)
+                petal_curve = math.sin(angle) * 0.6
+
+                inward = -x_norm * self.rose_inward_bias * radius
+
+                x = self.x + math.cos(angle + rotation) * radius + inward
+                y = self.y - height + petal_curve * radius * 0.6
+                z = self.z + layer_t * self.rose_depth_lift
+
+        
+                proj = project_fn(TempPoint(x, y, z))
+                if proj:
+                    points.append(proj[:2])
+
+            if len(points) < 2:
+                continue
+
+            # ---- Glow layers ----
+            for glow_pass in (6, 3):
+                pygame.draw.lines(
+                    glow_surface,
+                    (*petal_rgb, alpha),
+                    False,
+                    points,
+                    thickness + glow_pass
+                )
+
+            # Core
+            pygame.draw.lines(
+                surface,
+                petal_rgb,
+                False,
+                points,
+                thickness
+            )
+
+
 
     def _draw_neon_petals(
         self,
