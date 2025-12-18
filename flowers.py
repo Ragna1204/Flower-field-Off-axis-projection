@@ -122,6 +122,7 @@ class Flower:
         self.size = size
         self.hue = hue
         self.color_progress = 0.0
+        self.depth_repeat = FLOWER_DEPTH_REPEAT
 
         self._time = random.uniform(0, 10.0)  # de-sync flowers
         self.breath_offset = 0.0
@@ -416,112 +417,61 @@ class Flower:
         color,
         thickness
     ):
-        """Curved neon stem in 3D"""
+        """Elegant, fast neon stem (D3.2.75)"""
 
-        # ---- Ground anchoring glow ----
+        life = self.life
+        if life <= 0.01:
+            return
+
+        # ---- Ground anchor glow ----
         base_proj = project_fn(TempPoint(self.x, self.y, self.z))
         if base_proj:
             bx, by = base_proj[:2]
-            base_alpha = int(22 * self.life)
-            base_radius = int(6 + 8 * self.life)
-
             pygame.draw.circle(
                 glow_surface,
-                (*color, base_alpha),
-                (bx, by),
-                base_radius
+                (*color, int(20 * life)),
+                (int(bx), int(by)),
+                int(5 + 6 * life)
             )
 
+        # ---- Stem curve (3 control points, cheap + elegant) ----
+        height = 0.55 + 0.15 * life
+        sway = 0.18 * life
+        twist = math.sin(self._time * 0.6 + self.stem_twist_phase) * sway
 
-        segments = 16
-        height = 0.6
+        control_points = [
+            (self.x, self.y, self.z),
+            (self.x + twist * 0.6, self.y - height * 0.5, self.z),
+            (self.x - twist * 0.3, self.y - height, self.z),
+        ]
 
         points = []
-        thicknesses = []
-
-        for i in range(segments + 1):
-            t = i / segments
-
-            # Organic twist (life-driven, stable)
-            twist = math.sin(self._time * 0.6 + t * 4.0 + self.stem_twist_phase)
-            twist *= 0.12 * self.life
-
-            x = self.x + twist
-            y = self.y - t * height
-            z = self.z
-
-            # Thickness taper (thick bottom → thin top)
-            taper = (1.0 - t) ** 1.3
-            segment_thickness = max(1, int(thickness * (0.6 + 0.8 * taper)))
-
+        for x, y, z in control_points:
             proj = project_fn(TempPoint(x, y, z))
             if proj:
                 points.append(proj[:2])
-                thicknesses.append(segment_thickness)
 
         if len(points) < 2:
             return
-        
-        # ---- Stem base energy ring (ground contact) ----
-        base_proj = project_fn(TempPoint(self.x, self.y, self.z))
-        if base_proj:
-            bx, by = base_proj[:2]
 
-            base_radius = int(4 + 6 * self.life)
-            base_alpha = int(22 + 18 * self.life)
+        # ---- Glow (single pass only) ----
+        pygame.draw.lines(
+            glow_surface,
+            (*color, 14),
+            False,
+            points,
+            thickness + 3
+        )
 
-            # Glow
-            pygame.draw.circle(
-                glow_surface,
-                (*color, base_alpha),
-                (int(bx), int(by)),
-                base_radius + 4,
-                2
-            )
+        # ---- Core ----
+        pygame.draw.lines(
+            surface,
+            color,
+            False,
+            points,
+            thickness
+        )
 
-            # Core ring
-            pygame.draw.circle(
-                surface,
-                color,
-                (int(bx), int(by)),
-                base_radius,
-                1
-            )
-
-            
-        # ---- Draw stem segments individually ----
-        for i in range(len(points) - 1):
-            p1 = points[i]
-            p2 = points[i + 1]
-            seg_thick = thicknesses[i]
-
-            # Glow layers
-            for glow_pass in (4, 2):
-                for i in range(len(points) - 1):
-                    t = i / max(1, len(points) - 1)
-                    local_thickness = max(1, int(thickness * (1.0 - 0.5 * t)))
-
-                    pygame.draw.line(
-                        glow_surface,
-                        (*color, 18),
-                        points[i],
-                        points[i + 1],
-                        local_thickness + glow_pass
-                    )
-
-
-            # Core
-            for i in range(len(points) - 1):
-                t = i / max(1, len(points) - 1)
-                local_thickness = max(1, int(thickness * (1.0 - 0.5 * t)))
-
-                pygame.draw.line(
-                    glow_surface,
-                    (*color, 18),
-                    points[i],
-                    points[i + 1],
-                    local_thickness + glow_pass
-                )
 
 
     def _draw_neon_core(
@@ -578,13 +528,18 @@ class Flower:
         thickness
     ):
         
+        if self.z > self.depth_repeat * 0.85:
+            return
+
+        
         # Normalized lateral position (−1 … 0 … +1)
         field_half_width = 0.5 * (self.field_width if hasattr(self, "field_width") else 10.0)
         x_norm = max(-1.0, min(1.0, self.x / field_half_width))
         edge_factor = abs(x_norm)
 
         life = self.life
-        active_layers = max(1, int(self.rose_layers * life))
+        active_layers = min(4, max(1, int(self.rose_layers * life)))
+
 
         for layer in range(active_layers):
             layer_t = layer / max(1, self.rose_layers - 1)
@@ -606,7 +561,8 @@ class Flower:
 
             points = []
 
-            for i in range(self.rose_points + 1):
+            points_count = int(self.rose_points * (0.5 + 0.5 * importance))
+            for i in range(points_count + 1):
                 t = i / self.rose_points
                 angle = t * math.pi * 2
 
@@ -626,9 +582,20 @@ class Flower:
 
             if len(points) < 2:
                 continue
+            
+
+            # ---- Depth-based LOD ----
+            depth_norm = min(1.0, self.z / self.depth_repeat)
+
+            if depth_norm > 0.7:
+                glow_passes = (3,)
+            elif depth_norm > 0.4:
+                glow_passes = (4, 2)
+            else:
+                glow_passes = (6, 3)
 
             # ---- Glow layers ----
-            for glow_pass in (6, 3):
+            for glow_pass in glow_passes:
                 pygame.draw.lines(
                     glow_surface,
                     (*petal_rgb, alpha),
