@@ -117,7 +117,6 @@ class Flower:
         self.base_y = y
         self.y = y
         self.breath_offset = 0.0
-        self._time = random.uniform(0, math.pi * 2)
 
         self.z = z
         self.size = size
@@ -126,6 +125,21 @@ class Flower:
 
         self._time = random.uniform(0, 10.0)  # de-sync flowers
         self.breath_offset = 0.0
+
+        self.life = 0.0
+        self.petals_phase = random.uniform(0, math.pi * 2)
+        self.stem_phase = random.uniform(0, math.pi * 2)
+
+        self.stem_curve = random.uniform(0.6, 1.0)
+        self.stem_twist = random.choice([-1, 1])
+
+        self.rose_layers = 4          # number of petal rings
+        self.rose_points = 20         # resolution per ring
+        self.rose_radius = 0.12       # base size (3D units)
+        self.rose_height = 0.04       # vertical spread
+        self.rose_twist = random.uniform(0, math.pi * 2)
+
+
 
     def update(self, dt: float, progress: float) -> None:
         """Advance color progress toward `progress` (0..1) and apply life motion."""
@@ -155,6 +169,163 @@ class Flower:
         )
 
 
+    # def draw(
+    #     self,
+    #     surface: pygame.Surface,
+    #     glow_surface: pygame.Surface,
+    #     project_fn,
+    #     screen_size=None
+    # ) -> None:
+
+
+    #     # 1. Convert to temporary 3D point
+    #     p = TempPoint(self.x, self.y, self.z)
+
+    #     # 2. Project into screen space
+    #     proj = project_fn(p)
+    #     if proj is None:
+    #         return
+
+    #     # Must be 3 values: (sx, sy, scale)
+    #     try:
+    #         sx, sy, scale = proj
+    #     except Exception:
+    #         # Projection returned only (sx, sy) -> fallback to safe scale
+    #         sx, sy = proj
+    #         scale = 1.0
+
+    #     # 3. Screen culling
+    #     if screen_size:
+    #         sw, sh = screen_size
+    #         if sx < -50 or sx > sw + 50 or sy < -50 or sy > sh + 50:
+    #             return
+            
+    #     # ---- DEPTH-BASED SCALE FLATTENING ----
+    #     flattened = scale ** 0.52
+
+    #     # ---- DEPTH-BASED FOG STRENGTH ----
+    #     fog_strength = min(1.0, (1.0 - scale) ** 1.6)
+
+    #     # ---- FLOWER SIZE ----
+    #     draw_size = int(self.size * flattened * 105)
+    #     draw_size = max(1, draw_size)
+
+    #     # ---- VOLUMETRIC FOG HALO (WAVE-GATED) ----
+    #     life = self.life  # IMPORTANT: per-flower wave life
+
+    #     fog_strength = life ** 1.4
+    #     fog_alpha = int((10 + 60 * (1 - flattened) ** 1.8) * fog_strength)
+    #     fog_alpha = max(0, min(70, fog_alpha))
+
+    #     if fog_alpha > 0:
+    #         fog_radius = int(draw_size * (1.0 + 0.35 * life))
+
+    #         fog_rgb = self.hsv_to_rgb(self.hue, 0.35, 0.9)
+    #         fog_color = tuple(
+    #             int(lerp(60, c * 0.6, life))
+    #             for c in fog_rgb
+    #         )
+
+    #         pygame.draw.circle(
+    #             glow_surface,
+    #             (*fog_color, fog_alpha),
+    #             (sx, sy),
+    #             fog_radius
+    #         )
+
+
+    #     # # ================= NEON PETAL SKELETON (PHASE E1) =================
+    #     # if life > 0.02:
+    #     #     petal_count = 5
+    #     #     base_len = draw_size * (0.85 + 0.4 * life)
+    #     #     thickness = max(1, int(2 + 3 * life))
+
+    #     #     neon_rgb = self.hsv_to_rgb(self.hue, 0.9, 1.0)
+
+    #     #     for i in range(petal_count):
+    #     #         angle = (
+    #     #             i * (2 * math.pi / petal_count)
+    #     #             + math.sin(self._time * 0.6 + i) * 0.18
+    #     #         )
+
+    #     #         # Organic curvature
+    #     #         bend = math.sin(self._time * 0.9 + i * 1.3) * 0.35
+
+    #     #         x1, y1 = sx, sy
+    #     #         x2 = sx + math.cos(angle) * base_len
+    #     #         y2 = sy + math.sin(angle + bend) * base_len
+
+    #     #         # Energy falloff toward tip
+    #     #         tip_energy = 0.6 + 0.4 * life
+
+    #     #         line_color = (
+    #     #             int(neon_rgb[0] * tip_energy),
+    #     #             int(neon_rgb[1] * tip_energy),
+    #     #             int(neon_rgb[2] * tip_energy),
+    #     #         )
+
+    #     #         # Core line
+    #     #         pygame.draw.line(
+    #     #             surface,
+    #     #             line_color,
+    #     #             (x1, y1),
+    #     #             (x2, y2),
+    #     #             thickness
+    #     #         )
+
+    #     #         # Glow pass
+    #     #         pygame.draw.line(
+    #     #             glow_surface,
+    #     #             (*line_color, int(70 * life * life)),
+    #     #             (x1, y1),
+    #     #             (x2, y2),
+    #     #             thickness + 3
+    #     #         )
+    #     # # ================================================================
+
+    #     # ---- FLOWER COLORS ----
+    #     gray_center = (200, 200, 200)
+    #     gray_petal  = (160, 160, 160)
+
+    #     rgb_color = self.hsv_to_rgb(self.hue, 0.75, 0.92)
+    #     depth_glow = max(0.4, scale ** 0.6)
+
+    #     petal_color = tuple(
+    #         int(
+    #             lerp(gray_petal[i], rgb_color[i], life)
+    #             * depth_glow
+    #             * life
+    #         )
+    #         for i in range(3)
+    #     )
+
+    #     center_color = tuple(
+    #         int(
+    #             lerp(gray_center[i], (255, 230, 120)[i], life ** 1.3)
+    #         )
+    #         for i in range(3)
+    #     )
+
+
+    #     offsets = [(-0.4, 0), (0.4, 0), (0, -0.35), (0, 0.35)]
+    #     for ox, oy in offsets:
+    #         ox_pix = int(ox * draw_size)
+    #         oy_pix = int(oy * draw_size)
+    #         pygame.draw.circle(
+    #             surface,
+    #             petal_color,
+    #             (sx + ox_pix, sy + oy_pix),
+    #             max(1, int(draw_size * 0.6))
+    #         )
+
+    #     # 8. Draw center
+    #     pygame.draw.circle(
+    #         surface,
+    #         center_color,
+    #         (sx, sy),
+    #         max(1, int(draw_size * 0.5))
+    #     )
+
     def draw(
         self,
         surface: pygame.Surface,
@@ -163,103 +334,237 @@ class Flower:
         screen_size=None
     ) -> None:
 
+        # ---- Early exit ----
+        life = self.life
+        if self.life <= 0.01:
+            return
 
-        # 1. Convert to temporary 3D point
+        # ---- Project base point ----
         p = TempPoint(self.x, self.y, self.z)
-
-        # 2. Project into screen space
         proj = project_fn(p)
         if proj is None:
             return
 
-        # Must be 3 values: (sx, sy, scale)
         try:
             sx, sy, scale = proj
-        except Exception:
-            # Projection returned only (sx, sy) -> fallback to safe scale
+        except ValueError:
             sx, sy = proj
             scale = 1.0
 
-        # 3. Screen culling
+        # ---- Screen culling ----
         if screen_size:
             sw, sh = screen_size
-            if sx < -50 or sx > sw + 50 or sy < -50 or sy > sh + 50:
+            if sx < -100 or sx > sw + 100 or sy < -100 or sy > sh + 100:
                 return
-            
-        # ---- DEPTH-BASED SCALE FLATTENING ----
-        flattened = scale ** 0.52
 
-        # ---- DEPTH-BASED FOG STRENGTH ----
-        fog_strength = min(1.0, (1.0 - scale) ** 1.6)
+        # ---- Depth shaping ----
+        flattened = scale ** 0.55
+        life = self.life ** 1.4
 
-        # ---- FLOWER SIZE ----
-        draw_size = int(self.size * flattened * 105)
-        draw_size = max(1, draw_size)
+        # Base neon thickness
+        base_thickness = max(1, int(2.2 * flattened * life))
 
-        # ---- VOLUMETRIC FOG HALO (WAVE-GATED) ----
-        life = self.life  # IMPORTANT: per-flower wave life
+        # Colors
+        petal_rgb = self.hsv_to_rgb(self.hue, 0.9, 1.0)
+        core_rgb  = (255, 245, 210)
+        stem_rgb  = self.hsv_to_rgb((self.hue + 0.35) % 1.0, 0.6, 0.9)
 
-        fog_strength = life ** 1.4
-        fog_alpha = int((10 + 60 * (1 - flattened) ** 1.8) * fog_strength)
-        fog_alpha = max(0, min(70, fog_alpha))
-
-        if fog_alpha > 0:
-            fog_radius = int(draw_size * (1.0 + 0.35 * life))
-
-            fog_rgb = self.hsv_to_rgb(self.hue, 0.35, 0.9)
-            fog_color = tuple(
-                int(lerp(60, c * 0.6, life))
-                for c in fog_rgb
-            )
-
-            pygame.draw.circle(
-                glow_surface,
-                (*fog_color, fog_alpha),
-                (sx, sy),
-                fog_radius
-            )
-        # ---- FLOWER COLORS ----
-        gray_center = (200, 200, 200)
-        gray_petal  = (160, 160, 160)
-
-        rgb_color = self.hsv_to_rgb(self.hue, 0.75, 0.92)
-        depth_glow = max(0.4, scale ** 0.6)
-
-        petal_color = tuple(
-            int(
-                lerp(gray_petal[i], rgb_color[i], life)
-                * depth_glow
-                * life
-            )
-            for i in range(3)
-        )
-
-        center_color = tuple(
-            int(
-                lerp(gray_center[i], (255, 230, 120)[i], life ** 1.3)
-            )
-            for i in range(3)
-        )
-
-
-        offsets = [(-0.4, 0), (0.4, 0), (0, -0.35), (0, 0.35)]
-        for ox, oy in offsets:
-            ox_pix = int(ox * draw_size)
-            oy_pix = int(oy * draw_size)
-            pygame.draw.circle(
-                surface,
-                petal_color,
-                (sx + ox_pix, sy + oy_pix),
-                max(1, int(draw_size * 0.6))
-            )
-
-        # 8. Draw center
-        pygame.draw.circle(
+        # ---- DRAW STEM ----
+        self._draw_neon_stem(
             surface,
-            center_color,
-            (sx, sy),
-            max(1, int(draw_size * 0.5))
+            glow_surface,
+            project_fn,
+            stem_rgb,
+            base_thickness
         )
+
+        # ---- DRAW CORE ----
+        self._draw_neon_core(
+            surface,
+            glow_surface,
+            sx,
+            sy,
+            petal_rgb,
+            core_rgb,
+            base_thickness
+        )
+
+        # ---- DRAW PETALS ----
+        self._draw_neon_petals(
+            surface,
+            glow_surface,
+            sx,
+            sy,
+            petal_rgb,
+            base_thickness
+        )
+
+    def _draw_neon_stem(
+        self,
+        surface,
+        glow_surface,
+        project_fn,
+        color,
+        thickness
+    ):
+        """Curved neon stem in 3D"""
+
+        segments = 10
+        height = 0.6
+        sway = 0.15 * self.life
+
+        points = []
+        for i in range(segments + 1):
+            t = i / segments
+            x = self.x + math.sin(t * math.pi) * sway
+            y = self.y - t * height
+            z = self.z
+
+            proj = project_fn(TempPoint(x, y, z))
+            if proj:
+                points.append(proj[:2])
+
+        if len(points) < 2:
+            return
+
+        # ---- Glow layers ----
+        for glow_pass in (5, 3):
+            pygame.draw.lines(
+                glow_surface,
+                (*color, 18),
+                False,
+                points,
+                thickness + glow_pass
+            )
+
+        # ---- Core line ----
+        pygame.draw.lines(
+            surface,
+            color,
+            False,
+            points,
+            thickness
+        )
+
+    def _draw_neon_core(
+        self,
+        surface,
+        glow_surface,
+        sx,
+        sy,
+        petal_rgb,
+        core_rgb,
+        thickness
+    ):
+        """Neon spiral core"""
+
+        turns = 1.5
+        points = []
+        radius = 6 + 6 * self.life
+
+        for i in range(18):
+            t = i / 18
+            angle = t * math.pi * 2 * turns
+            r = radius * t
+
+            px = sx + math.cos(angle) * r
+            py = sy + math.sin(angle) * r
+
+            points.append((px, py))
+
+        # Glow
+        for glow_pass in (6, 3):
+            pygame.draw.lines(
+                glow_surface,
+                (*petal_rgb, 22),
+                False,
+                points,
+                thickness + glow_pass
+            )
+
+        # Core
+        pygame.draw.lines(
+            surface,
+            core_rgb,
+            False,
+            points,
+            thickness
+        )
+
+    def _draw_neon_rose_head(
+        self,
+        surface,
+        glow_surface,
+        project_fn,
+        petal_rgb,
+        thickness
+    ):
+        pass
+
+    def _draw_neon_petals(
+        self,
+        surface,
+        glow_surface,
+        sx,
+        sy,
+        petal_rgb,
+        thickness
+    ):
+        """Outer neon petal arcs"""
+
+        life = self.life
+        if life < 0.15:
+            return
+
+        # Number of petal arcs
+        petal_count = 4
+
+        # Base radius grows with life
+        base_radius = 10 + 10 * life
+
+        for p in range(petal_count):
+            phase = self.petals_phase + p * (math.pi * 2 / petal_count)
+
+            points = []
+
+            # Each petal is a curved arc
+            arc_len = math.pi * 0.9
+            segments = 16
+
+            for i in range(segments):
+                t = i / (segments - 1)
+
+                angle = phase + (t - 0.5) * arc_len
+                radius = base_radius * (0.85 + 0.25 * t)
+
+                x = sx + math.cos(angle) * radius
+                y = sy + math.sin(angle) * radius * 0.85
+
+                points.append((x, y))
+
+            if len(points) < 2:
+                continue
+
+            # ---- Glow layers ----
+            for glow_pass in (7, 4):
+                pygame.draw.lines(
+                    glow_surface,
+                    (*petal_rgb, 16),
+                    False,
+                    points,
+                    thickness + glow_pass
+                )
+
+            # ---- Core line ----
+            pygame.draw.lines(
+                surface,
+                petal_rgb,
+                False,
+                points,
+                thickness
+            )
+
+
 
 
     def is_visible(self, project_fn, head_x: float, head_y: float, screen_size=None) -> bool:
