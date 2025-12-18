@@ -133,6 +133,9 @@ class Flower:
         self.stem_curve = random.uniform(0.6, 1.0)
         self.stem_twist = random.choice([-1, 1])
 
+        self.stem_twist_phase = random.uniform(0, math.pi * 2)
+        self.stem_base_radius = 0.12 + random.uniform(-0.02, 0.02)
+
         # ---- Rose geometry parameters ----
         self.rose_layers = 4          # number of petal rings
         self.rose_points = 20         # resolution per ring
@@ -415,42 +418,111 @@ class Flower:
     ):
         """Curved neon stem in 3D"""
 
-        segments = 10
+        # ---- Ground anchoring glow ----
+        base_proj = project_fn(TempPoint(self.x, self.y, self.z))
+        if base_proj:
+            bx, by = base_proj[:2]
+            base_alpha = int(22 * self.life)
+            base_radius = int(6 + 8 * self.life)
+
+            pygame.draw.circle(
+                glow_surface,
+                (*color, base_alpha),
+                (bx, by),
+                base_radius
+            )
+
+
+        segments = 16
         height = 0.6
-        sway = 0.15 * self.life
 
         points = []
+        thicknesses = []
+
         for i in range(segments + 1):
             t = i / segments
-            x = self.x + math.sin(t * math.pi) * sway
+
+            # Organic twist (life-driven, stable)
+            twist = math.sin(self._time * 0.6 + t * 4.0 + self.stem_twist_phase)
+            twist *= 0.12 * self.life
+
+            x = self.x + twist
             y = self.y - t * height
             z = self.z
+
+            # Thickness taper (thick bottom → thin top)
+            taper = (1.0 - t) ** 1.3
+            segment_thickness = max(1, int(thickness * (0.6 + 0.8 * taper)))
 
             proj = project_fn(TempPoint(x, y, z))
             if proj:
                 points.append(proj[:2])
+                thicknesses.append(segment_thickness)
 
         if len(points) < 2:
             return
+        
+        # ---- Stem base energy ring (ground contact) ----
+        base_proj = project_fn(TempPoint(self.x, self.y, self.z))
+        if base_proj:
+            bx, by = base_proj[:2]
 
-        # ---- Glow layers ----
-        for glow_pass in (5, 3):
-            pygame.draw.lines(
+            base_radius = int(4 + 6 * self.life)
+            base_alpha = int(22 + 18 * self.life)
+
+            # Glow
+            pygame.draw.circle(
                 glow_surface,
-                (*color, 18),
-                False,
-                points,
-                thickness + glow_pass
+                (*color, base_alpha),
+                (int(bx), int(by)),
+                base_radius + 4,
+                2
             )
 
-        # ---- Core line ----
-        pygame.draw.lines(
-            surface,
-            color,
-            False,
-            points,
-            thickness
-        )
+            # Core ring
+            pygame.draw.circle(
+                surface,
+                color,
+                (int(bx), int(by)),
+                base_radius,
+                1
+            )
+
+            
+        # ---- Draw stem segments individually ----
+        for i in range(len(points) - 1):
+            p1 = points[i]
+            p2 = points[i + 1]
+            seg_thick = thicknesses[i]
+
+            # Glow layers
+            for glow_pass in (4, 2):
+                for i in range(len(points) - 1):
+                    t = i / max(1, len(points) - 1)
+                    local_thickness = max(1, int(thickness * (1.0 - 0.5 * t)))
+
+                    pygame.draw.line(
+                        glow_surface,
+                        (*color, 18),
+                        points[i],
+                        points[i + 1],
+                        local_thickness + glow_pass
+                    )
+
+
+            # Core
+            for i in range(len(points) - 1):
+                t = i / max(1, len(points) - 1)
+                local_thickness = max(1, int(thickness * (1.0 - 0.5 * t)))
+
+                pygame.draw.line(
+                    glow_surface,
+                    (*color, 18),
+                    points[i],
+                    points[i + 1],
+                    local_thickness + glow_pass
+                )
+
 
     def _draw_neon_core(
         self,
@@ -517,8 +589,13 @@ class Flower:
         for layer in range(active_layers):
             layer_t = layer / max(1, self.rose_layers - 1)
 
-            alpha = int(22 * (1.0 - layer_t * 0.6))
+            # Depth-based importance fade
+            depth_factor = 1.0 - min(1.0, self.z / self.depth_repeat)
+            importance = 0.5 + 0.5 * depth_factor
+
+            alpha = int((22 * importance) * (1.0 - layer_t * 0.6))
             alpha = max(8, alpha)
+
 
             radius = self.rose_base_radius * (1.0 + layer_t * 1.4)
             # Perspective-aware compression near edges
