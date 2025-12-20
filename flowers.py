@@ -141,12 +141,18 @@ class Flower:
         self.rose_layers = 4          # number of petal rings
         self.rose_points = 20         # resolution per ring
         self.rose_radius = 0.12       # base size (3D units)
-        self.rose_height = 0.04       # vertical spread
+        self.rose_height = 0.10       # vertical spread
         self.rose_twist = random.uniform(0, math.pi * 2)
 
         self.rose_inward_bias = 0.22      # how much edge roses lean inward
         self.rose_depth_lift = 0.18       # vertical stacking illusion
         self.rose_edge_compress = 0.35    # radius compression at extreme X
+
+        self.petal_count = random.randint(5, 7)
+        self.petal_length = 0.10 + random.uniform(-0.02, 0.03)
+        self.petal_spread = 0.55
+        self.petal_curl = random.uniform(0.6, 1.2)
+        self.core_radius = 0.025
 
 
 
@@ -388,26 +394,36 @@ class Flower:
             base_thickness
         )
 
-        # ---- DRAW CORE ----
-        self._draw_neon_core(
+        # # ---- DRAW CORE ----
+        # self._draw_neon_core(
+        #     surface,
+        #     glow_surface,
+        #     sx,
+        #     sy,
+        #     petal_rgb,
+        #     core_rgb,
+        #     base_thickness
+        # )
+
+        # # ---- DRAW PETALS ----
+        # self._draw_neon_petals(
+        #     surface,
+        #     glow_surface,
+        #     sx,
+        #     sy,
+        #     petal_rgb,
+        #     base_thickness
+        # )
+
+        # ---- DRAW ROSE HEAD ----
+        self._draw_neon_rose_head(
             surface,
             glow_surface,
-            sx,
-            sy,
+            project_fn,
             petal_rgb,
-            core_rgb,
             base_thickness
         )
 
-        # ---- DRAW PETALS ----
-        self._draw_neon_petals(
-            surface,
-            glow_surface,
-            sx,
-            sy,
-            petal_rgb,
-            base_thickness
-        )
 
     def _draw_neon_stem(
         self,
@@ -441,8 +457,8 @@ class Flower:
 
         control_points = [
             (self.x, self.y, self.z),
-            (self.x + twist * 0.6, self.y - height * 0.5, self.z),
-            (self.x - twist * 0.3, self.y - height, self.z),
+            (self.x + twist * 0.6, self.y + height * 0.5, self.z),
+            (self.x - twist * 0.3, self.y + height, self.z),
         ]
 
         points = []
@@ -519,6 +535,106 @@ class Flower:
             thickness
         )
 
+    # def _draw_neon_rose_head(
+    #     self,
+    #     surface,
+    #     glow_surface,
+    #     project_fn,
+    #     petal_rgb,
+    #     thickness
+    # ):
+        
+    #     if self.z > self.depth_repeat * 0.85:
+    #         return
+
+        
+    #     # Normalized lateral position (−1 … 0 … +1)
+    #     field_half_width = 0.5 * (self.field_width if hasattr(self, "field_width") else 10.0)
+    #     x_norm = max(-1.0, min(1.0, self.x / field_half_width))
+    #     edge_factor = abs(x_norm)
+
+    #     life = self.life
+    #     active_layers = min(4, max(1, int(self.rose_layers * life)))
+
+
+    #     for layer in range(active_layers):
+    #         layer_t = layer / max(1, self.rose_layers - 1)
+
+    #         # Depth-based importance fade
+    #         depth_factor = 1.0 - min(1.0, self.z / self.depth_repeat)
+    #         importance = 0.5 + 0.5 * depth_factor
+
+    #         alpha = int((22 * importance) * (1.0 - layer_t * 0.6))
+    #         alpha = max(8, alpha)
+
+
+    #         radius = self.rose_radius * (1.0 + layer_t * 1.4)
+
+    #         height = layer_t * self.rose_height
+    #         rotation = self.rose_twist + layer * 0.9 + math.sin(self.petals_phase + layer) * 0.2
+
+    #         points = []
+
+    #         points_count = int(self.rose_points * (0.5 + 0.5 * importance))
+    #         for i in range(points_count + 1):
+    #             t = i / max(1, points_count)
+    #             angle = t * math.pi * 2
+
+    #             # ---- Petal lobe field ----
+    #             petal_count = 5 + layer          # more petals on outer layers
+    #             lobe = math.sin(angle * petal_count + self.petals_phase)
+    #             # Sharpen petal tips, soften valleys
+    #             lobe = math.copysign(abs(lobe) ** 1.6, lobe)
+
+    #             petal_curve = lobe * (0.35 + 0.25 * layer_t)
+
+    #             local_radius = radius * (1.0 + petal_curve * 0.6)
+    #             local_radius *= (1.0 - edge_factor * self.rose_edge_compress)
+
+    #             inward = -x_norm * self.rose_inward_bias * local_radius
+
+    #             x = self.x + math.cos(angle + rotation) * local_radius + inward
+    #             y = self.y - height + petal_curve * local_radius * (0.4 + 0.3 * layer_t)
+    #             z = self.z + layer_t * self.rose_depth_lift
+
+        
+    #             proj = project_fn(TempPoint(x, y, z))
+    #             if proj:
+    #                 points.append(proj[:2])
+
+    #         if len(points) < 2:
+    #             continue
+            
+
+    #         # ---- Depth-based LOD ----
+    #         depth_norm = min(1.0, self.z / self.depth_repeat)
+
+    #         if depth_norm > 0.7:
+    #             glow_passes = (3,)
+    #         elif depth_norm > 0.4:
+    #             glow_passes = (4, 2)
+    #         else:
+    #             glow_passes = (6, 3)
+
+    #         # ---- Glow layers ----
+    #         for glow_pass in glow_passes:
+    #             pygame.draw.lines(
+    #                 glow_surface,
+    #                 (*petal_rgb, alpha),
+    #                 False,
+    #                 points,
+    #                 thickness + glow_pass
+    #             )
+
+    #         # Core
+    #         pygame.draw.lines(
+    #             surface,
+    #             petal_rgb,
+    #             False,
+    #             points,
+    #             thickness
+    #         )
+
     def _draw_neon_rose_head(
         self,
         surface,
@@ -527,91 +643,137 @@ class Flower:
         petal_rgb,
         thickness
     ):
-        
-        if self.z > self.depth_repeat * 0.85:
+        # 1. Distance culling
+        if self.z > self.depth_repeat * 0.9:
             return
 
+        # 2. Scale check
+        proj = project_fn(TempPoint(self.x, self.y, self.z))
+        if proj is None:
+            return
         
-        # Normalized lateral position (−1 … 0 … +1)
-        field_half_width = 0.5 * (self.field_width if hasattr(self, "field_width") else 10.0)
-        x_norm = max(-1.0, min(1.0, self.x / field_half_width))
-        edge_factor = abs(x_norm)
+        try:
+            _, _, scale = proj
+        except ValueError:
+            scale = 1.0
+            
+        if scale < 0.15: 
+            return
 
+        # 3. Parameters & Easing
+        if self.life < 0.05:
+            return
+        
         life = self.life
-        active_layers = min(4, max(1, int(self.rose_layers * life)))
-
-
-        for layer in range(active_layers):
-            layer_t = layer / max(1, self.rose_layers - 1)
-
-            # Depth-based importance fade
-            depth_factor = 1.0 - min(1.0, self.z / self.depth_repeat)
-            importance = 0.5 + 0.5 * depth_factor
-
-            alpha = int((22 * importance) * (1.0 - layer_t * 0.6))
-            alpha = max(8, alpha)
-
-
-            radius = self.rose_base_radius * (1.0 + layer_t * 1.4)
-            # Perspective-aware compression near edges
-            radius *= (1.0 - edge_factor * self.rose_edge_compress)
-
-            height = layer_t * self.rose_height
-            rotation = self.rose_twist + layer * 0.9
-
-            points = []
-
-            points_count = int(self.rose_points * (0.5 + 0.5 * importance))
-            for i in range(points_count + 1):
-                t = i / self.rose_points
-                angle = t * math.pi * 2
-
-                # Petal deformation (key line)
-                petal_curve = math.sin(angle) * 0.6
-
-                inward = -x_norm * self.rose_inward_bias * radius
-
-                x = self.x + math.cos(angle + rotation) * radius + inward
-                y = self.y - height + petal_curve * radius * 0.6
-                z = self.z + layer_t * self.rose_depth_lift
-
+            
+        # --- DEPTH-BASED BLOOM DELAY ---
+        # 1. Compute depth_norm (0=front, 1=back)
+        depth_norm = max(0.0, min(1.0, self.z / self.depth_repeat))
         
-                proj = project_fn(TempPoint(x, y, z))
-                if proj:
-                    points.append(proj[:2])
+        # 2. Delay factor (back flowers bloom later)
+        bloom_delay = depth_norm * 0.45
+        
+        # 3. Local life (time since this specific flower started blooming)
+        # Remap [bloom_delay..1.0] to [0.0..1.0]
+        denom = 1.0 - bloom_delay
+        if denom < 0.001: denom = 0.001
+        
+        local_life = (life - bloom_delay) / denom
+        local_life = max(0.0, min(1.0, local_life))
 
-            if len(points) < 2:
+        if local_life < 0.01:
+            return
+
+        # 4. Refined easing on LOCAL life
+        if local_life < 0.35:
+            eased_life = local_life * local_life * 0.4
+        else:
+            t = (local_life - 0.35) / 0.65
+            eased_life = 0.14 + t * t * (3 - 2 * t) * 0.86
+
+        # --- Anchor to TOP of stem ---
+        # Stem uses raw life, so we must match it to attach correctly
+        stem_height = 0.55 + 0.15 * life
+        head_y = self.y + stem_height
+
+        # Base dimensions (use eased_life for bloom size)
+        base_radius = 0.22 * (0.6 + 0.4 * eased_life)
+        petal_count = 7
+        arc_span = math.pi * 0.7 
+        
+        # 4. Draw Radial Petals
+        for i in range(petal_count):
+            
+            is_inner = (i % 2 == 0)
+            
+            # --- Staged Appearance ---
+            if is_inner:
+                petal_life = eased_life
+            else:
+                petal_life = max(0.0, (eased_life - 0.2) / 0.8)
+                
+            if petal_life < 0.01:
                 continue
             
-
-            # ---- Depth-based LOD ----
-            depth_norm = min(1.0, self.z / self.depth_repeat)
-
-            if depth_norm > 0.7:
-                glow_passes = (3,)
-            elif depth_norm > 0.4:
-                glow_passes = (4, 2)
+            # Stable radial distribution
+            center_angle = (i / petal_count) * math.pi * 2 + self.rose_twist
+            
+            if is_inner:
+                r_scale = 0.85
+                y_drop = 0.02 
+                steps = 5
+                alpha_factor = 1.0 
             else:
-                glow_passes = (6, 3)
+                r_scale = 1.15
+                y_drop = 0.08
+                steps = 4 
+                alpha_factor = 0.7 
+            
+            # Scale radius with petal_life
+            r_final = base_radius * r_scale * petal_life
+            
+            # Generate Arc Points
+            points_3d = []
+            
+            for k in range(steps + 1):
+                t = k / steps # 0..1
+                
+                theta = center_angle + (t - 0.5) * arc_span
+                
+                px = self.x + math.cos(theta) * r_final
+                pz = self.z + math.sin(theta) * r_final
+                
+                # --- Bowl Shape ---
+                curve_drop = 0.10 * ((t - 0.5) * 2)**2
+                py = head_y - (y_drop + curve_drop) * petal_life
+                
+                points_3d.append((px, py, pz))
+            
+            # Project
+            screen_points = []
+            for p3 in points_3d:
+                proj_pt = project_fn(TempPoint(*p3))
+                if proj_pt:
+                    screen_points.append(proj_pt[:2])
+            
+            if len(screen_points) < 2:
+                continue
+            
+            # Alpha Hierarchy
+            final_color = (
+                int(petal_rgb[0] * alpha_factor),
+                int(petal_rgb[1] * alpha_factor),
+                int(petal_rgb[2] * alpha_factor)
+            )
 
-            # ---- Glow layers ----
-            for glow_pass in glow_passes:
-                pygame.draw.lines(
-                    glow_surface,
-                    (*petal_rgb, alpha),
-                    False,
-                    points,
-                    thickness + glow_pass
-                )
-
-            # Core
             pygame.draw.lines(
-                surface,
-                petal_rgb,
-                False,
-                points,
+                surface, 
+                final_color, 
+                False, 
+                screen_points, 
                 thickness
             )
+
 
 
 
