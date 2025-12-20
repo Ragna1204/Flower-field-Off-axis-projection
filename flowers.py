@@ -380,10 +380,17 @@ class Flower:
         # Base neon thickness
         base_thickness = max(1, int(2.2 * flattened * life))
 
-        # Colors
-        petal_rgb = self.hsv_to_rgb(self.hue, 0.9, 1.0)
+        # Colors (Unified Palette)
+        base_hue = self.hue
+        
+        # Depth desaturation
+        depth_norm = max(0.0, min(1.0, self.z / self.depth_repeat))
+        sat_scale = 1.0 - depth_norm * 0.35
+        val_scale = 1.0 - depth_norm * 0.25
+
+        petal_rgb = self.hsv_to_rgb(base_hue, 0.85 * sat_scale, 1.0 * val_scale)
         core_rgb  = (255, 245, 210)
-        stem_rgb  = self.hsv_to_rgb((self.hue + 0.35) % 1.0, 0.6, 0.9)
+        stem_rgb  = self.hsv_to_rgb(base_hue, 0.55 * sat_scale, 0.75 * val_scale)
 
         # ---- DRAW STEM ----
         self._draw_neon_stem(
@@ -443,12 +450,19 @@ class Flower:
         base_proj = project_fn(TempPoint(self.x, self.y, self.z))
         if base_proj:
             bx, by = base_proj[:2]
-            pygame.draw.circle(
-                glow_surface,
-                (*color, int(20 * life)),
-                (int(bx), int(by)),
-                int(5 + 6 * life)
-            )
+            
+            # Depth scaling for ground glow
+            depth_norm = max(0.0, min(1.0, self.z / self.depth_repeat))
+            g_radius = (5 + 6 * life) * (1.0 - depth_norm * 0.6)
+            g_alpha = min(8, int(20 * life)) * (1.0 - depth_norm * 0.7)
+            
+            if g_alpha > 1:
+                pygame.draw.circle(
+                    glow_surface,
+                    (*color, int(g_alpha)),
+                    (int(bx), int(by)),
+                    max(1, int(g_radius))
+                )
 
         # ---- Stem curve (3 control points, cheap + elegant) ----
         height = 0.55 + 0.15 * life
@@ -470,13 +484,13 @@ class Flower:
         if len(points) < 2:
             return
 
-        # ---- Glow (single pass only) ----
+        # ---- Glow (subtle) ----
         pygame.draw.lines(
             glow_surface,
-            (*color, 14),
+            (*color, 10),
             False,
             points,
-            thickness + 3
+            thickness + 1
         )
 
         # ---- Core ----
@@ -630,10 +644,9 @@ class Flower:
     #         pygame.draw.lines(
     #             surface,
     #             petal_rgb,
-    #             False,
-    #             points,
     #             thickness
     #         )
+
 
     def _draw_neon_rose_head(
         self,
@@ -666,86 +679,121 @@ class Flower:
         
         life = self.life
             
-        # --- DEPTH-BASED BLOOM DELAY ---
-        # 1. Compute depth_norm (0=front, 1=back)
+        # --- DEPTH-BASED Easing (Slower in back) ---
         depth_norm = max(0.0, min(1.0, self.z / self.depth_repeat))
         
-        # 2. Delay factor (back flowers bloom later)
-        bloom_delay = depth_norm * 0.45
-        
-        # 3. Local life (time since this specific flower started blooming)
-        # Remap [bloom_delay..1.0] to [0.0..1.0]
-        denom = 1.0 - bloom_delay
-        if denom < 0.001: denom = 0.001
-        
-        local_life = (life - bloom_delay) / denom
-        local_life = max(0.0, min(1.0, local_life))
+        # Power curve: shallow (front) blooms fast, deep (back) blooms slow
+        # Base 1.25 slows ALL flowers down (intra-flower speed)
+        # Depth factor 2.0 makes back rows significantly slower
+        life_z = life ** (1.25 + depth_norm * 2.0)
 
-        if local_life < 0.01:
-            return
+        # --- 3-PHASE BLOOM LOGIC ---
+        # Decouple visual state into phases
+        openness = 0.0
+        radius_scale = 0.0
+        glow_intensity = 0.0
 
-        # 4. Refined easing on LOCAL life
-        if local_life < 0.35:
-            eased_life = local_life * local_life * 0.4
+        if life_z < 0.25:
+             # Phase 1: Bud Hold
+             # Tight curve, minimal radius, faint glow
+             # Normalized progress 0..1
+             t = life_z / 0.25
+             openness = 0.05 * t
+             radius_scale = 0.15 + 0.05 * t
+             glow_intensity = 0.1 * t
+             
+        elif life_z < 0.6:
+             # Phase 2: Shape Reveal
+             # Arc widens, slow growth, definition visible
+             t = (life_z - 0.25) / 0.35
+             # Cubic ease out usually feels organic for unfolding
+             et = 1.0 - (1.0 - t) ** 3
+             
+             openness = 0.05 + 0.55 * et  # 0.05 -> 0.60
+             radius_scale = 0.20 + 0.30 * et # 0.20 -> 0.50
+             glow_intensity = 0.1 + 0.2 * et
+             
         else:
-            t = (local_life - 0.35) / 0.65
-            eased_life = 0.14 + t * t * (3 - 2 * t) * 0.86
+             # Phase 3: Expansion
+             # Full radius growth, full glow
+             t = (life_z - 0.6) / 0.4
+             # Smoothstep for final expansion
+             et = t * t * (3 - 2 * t)
+             
+             openness = 0.60 + 0.40 * et # 0.60 -> 1.0
+             radius_scale = 0.50 + 0.50 * et # 0.50 -> 1.0
+             glow_intensity = 0.3 + 0.7 * et
 
         # --- Anchor to TOP of stem ---
         # Stem uses raw life, so we must match it to attach correctly
         stem_height = 0.55 + 0.15 * life
         head_y = self.y + stem_height
 
-        # Base dimensions (use eased_life for bloom size)
-        base_radius = 0.22 * (0.6 + 0.4 * eased_life)
+        # Base dimensions driven by phase logic
+        base_radius = 0.22 * radius_scale
         petal_count = 7
-        arc_span = math.pi * 0.7 
+        
+        # Arc span increases with openness (tight knot -> loose bowl)
+        arc_span = math.pi * (0.3 + 0.4 * openness)
         
         # 4. Draw Radial Petals
         for i in range(petal_count):
             
-            is_inner = (i % 2 == 0)
+            # --- HIERARCHY: Primary vs Secondary ---
+            # Primary = Odd (Outer-ish) -> Dominant
+            # Secondary = Even (Inner-ish) -> Supportive
+            is_primary = (i % 2 != 0)
             
-            # --- Staged Appearance ---
-            if is_inner:
-                petal_life = eased_life
+            if is_primary:
+                # Primary: Dominant, larger, brighter
+                r_scale_base = 1.15
+                alpha_factor = 1.0
+                steps = 4
+                glow_thickness_mod = 2 # Extra glow
+                span_mod = 1.1 # Slightly wider
+                y_drop = 0.08
+                visible_threshold = 0.30
             else:
-                petal_life = max(0.0, (eased_life - 0.2) / 0.8)
-                
-            if petal_life < 0.01:
+                # Secondary: Receding, smaller, dimmer
+                r_scale_base = 0.85
+                alpha_factor = 0.65 # Reduced alpha
+                steps = 3 # Fewer segments
+                glow_thickness_mod = 1 
+                span_mod = 0.9 # Shorter arc
+                y_drop = 0.02
+                visible_threshold = 0.15
+            
+            if life_z < visible_threshold:
                 continue
+                
+            # Fade in transition
+            fade_in = min(1.0, (life_z - visible_threshold) / 0.1)
             
             # Stable radial distribution
             center_angle = (i / petal_count) * math.pi * 2 + self.rose_twist
             
-            if is_inner:
-                r_scale = 0.85
-                y_drop = 0.02 
-                steps = 5
-                alpha_factor = 1.0 
-            else:
-                r_scale = 1.15
-                y_drop = 0.08
-                steps = 4 
-                alpha_factor = 0.7 
-            
-            # Scale radius with petal_life
-            r_final = base_radius * r_scale * petal_life
+            # Apply hierarchy modifiers
+            r_final = base_radius * r_scale_base
+            final_arc_span = arc_span * span_mod
             
             # Generate Arc Points
             points_3d = []
             
             for k in range(steps + 1):
-                t = k / steps # 0..1
+                t_arc = k / steps # 0..1
                 
-                theta = center_angle + (t - 0.5) * arc_span
+                theta = center_angle + (t_arc - 0.5) * final_arc_span
                 
                 px = self.x + math.cos(theta) * r_final
                 pz = self.z + math.sin(theta) * r_final
                 
                 # --- Bowl Shape ---
-                curve_drop = 0.10 * ((t - 0.5) * 2)**2
-                py = head_y - (y_drop + curve_drop) * petal_life
+                base_curve = 0.15 * (1.0 - 0.5 * openness) 
+                
+                curve_drop = base_curve * ((t_arc - 0.5) * 2)**2
+                
+                # Petal tips droop slightly
+                py = head_y - (y_drop + curve_drop) * openness
                 
                 points_3d.append((px, py, pz))
             
@@ -766,9 +814,33 @@ class Flower:
                 int(petal_rgb[2] * alpha_factor)
             )
 
+            # Glow (controlled by phase and hierarchy)
+            if glow_intensity > 0.05:
+                # Modulate alpha by glow_intensity
+                glow_alpha = int(24 * glow_intensity)
+                if not is_primary:
+                    glow_alpha = int(glow_alpha * 0.7) # Dimmer glow for secondary
+                    
+                pygame.draw.lines(
+                    glow_surface, 
+                    (*final_color, glow_alpha), 
+                    False, 
+                    screen_points, 
+                    thickness + glow_thickness_mod
+                )
+
+            # Core (modulate brightness by fade_in to avoid popping)
+            core_alpha_sim = int(255 * fade_in) # Simulated via color mix if transparency supported
+            # Since we just draw RGB, we can just darken it
+            drawn_color = (
+                int(final_color[0] * fade_in),
+                int(final_color[1] * fade_in),
+                int(final_color[2] * fade_in),
+            )
+            
             pygame.draw.lines(
                 surface, 
-                final_color, 
+                drawn_color, 
                 False, 
                 screen_points, 
                 thickness
