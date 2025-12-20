@@ -464,34 +464,61 @@ class Flower:
                     max(1, int(g_radius))
                 )
 
-        # ---- Stem curve (3 control points, cheap + elegant) ----
+        # ---- Stem Curve Logic ----
         height = 0.55 + 0.15 * life
-        sway = 0.18 * life
-        twist = math.sin(self._time * 0.6 + self.stem_twist_phase) * sway
+        
+        # Calculate Bloom State (Replicated logic for sync)
+        depth_norm = max(0.0, min(1.0, self.z / self.depth_repeat))
+        life_z = life ** (1.25 + depth_norm * 2.0)
+        
+        # Energy Transfer: Stem glow fades as flower blooms
+        # < 0.3: Full glow (Energy in stem)
+        # > 0.6: Reduced glow (Energy moved to flower)
+        if life_z < 0.3:
+            stem_glow_factor = 1.0
+        elif life_z < 0.6:
+            # Interpolate 1.0 -> 0.4
+            t = (life_z - 0.3) / 0.3
+            stem_glow_factor = 1.0 - 0.6 * t
+        else:
+            stem_glow_factor = 0.4
+            
+        stem_glow_alpha = int(10 * stem_glow_factor)
 
-        control_points = [
-            (self.x, self.y, self.z),
-            (self.x + twist * 0.6, self.y + height * 0.5, self.z),
-            (self.x - twist * 0.3, self.y + height, self.z),
-        ]
-
+        # 3 control points (start, mid, end)
+        p0 = (self.x, self.y, self.z)
+        p2 = (self.x, self.y + height, self.z)
+        
+        mid_y = self.y + height * 0.5
+        # Slight sway based on x/z
+        sway = 0.05 * math.sin(self.x * 2 + self.z + life * 3)
+        p1 = (self.x + sway, mid_y, self.z)
+        
         points = []
-        for x, y, z in control_points:
-            proj = project_fn(TempPoint(x, y, z))
+        steps = 5
+        for i in range(steps + 1):
+            t = i / steps
+            # Quadratic bezier
+            bx = (1-t)**2 * p0[0] + 2*(1-t)*t * p1[0] + t**2 * p2[0]
+            by = (1-t)**2 * p0[1] + 2*(1-t)*t * p1[1] + t**2 * p2[1]
+            bz = (1-t)**2 * p0[2] + 2*(1-t)*t * p1[2] + t**2 * p2[2]
+            
+            proj = project_fn(TempPoint(bx, by, bz))
             if proj:
                 points.append(proj[:2])
-
+                
         if len(points) < 2:
             return
 
         # ---- Glow (subtle) ----
-        pygame.draw.lines(
-            glow_surface,
-            (*color, 10),
-            False,
-            points,
-            thickness + 1
-        )
+        if stem_glow_alpha > 1:
+            pygame.draw.lines(
+                glow_surface,
+                (*color, stem_glow_alpha),
+                False,
+                points,
+                thickness + 1
+            )
 
         # ---- Core ----
         pygame.draw.lines(
@@ -723,6 +750,10 @@ class Flower:
              openness = 0.60 + 0.40 * et # 0.60 -> 1.0
              radius_scale = 0.50 + 0.50 * et # 0.50 -> 1.0
              glow_intensity = 0.3 + 0.7 * et
+             
+        # --- GLOW INTELLIGENCE (Deprecated/Refactored) ---
+        # The 3-pass system (below) replaces complex dynamic logic
+        # per user request.
 
         # --- Anchor to TOP of stem ---
         # Stem uses raw life, so we must match it to attach correctly
@@ -731,72 +762,172 @@ class Flower:
 
         # Base dimensions driven by phase logic
         base_radius = 0.22 * radius_scale
-        petal_count = 7
+        petal_count = 6
         
-        # Arc span increases with openness (tight knot -> loose bowl)
-        arc_span = math.pi * (0.3 + 0.4 * openness)
-        
-        # 4. Draw Radial Petals
+        # 4. Draw Radial Petals (Bezier Logic)
         for i in range(petal_count):
             
             # --- HIERARCHY: Primary vs Secondary ---
-            # Primary = Odd (Outer-ish) -> Dominant
-            # Secondary = Even (Inner-ish) -> Supportive
-            is_primary = (i % 2 != 0)
+            # Even = Inner (Cupped up)
+            # Odd = Outer (Flared out)
+            is_inner = (i % 2 == 0)
             
-            if is_primary:
-                # Primary: Dominant, larger, brighter
-                r_scale_base = 1.15
-                alpha_factor = 1.0
-                steps = 4
-                glow_thickness_mod = 2 # Extra glow
-                span_mod = 1.1 # Slightly wider
-                y_drop = 0.08
-                visible_threshold = 0.30
-            else:
-                # Secondary: Receding, smaller, dimmer
-                r_scale_base = 0.85
-                alpha_factor = 0.65 # Reduced alpha
-                steps = 3 # Fewer segments
-                glow_thickness_mod = 1 
-                span_mod = 0.9 # Shorter arc
-                y_drop = 0.02
+            # --- Staged Appearance ---
+            if is_inner:
                 visible_threshold = 0.15
-            
+            else:
+                visible_threshold = 0.30
+                
             if life_z < visible_threshold:
                 continue
                 
             # Fade in transition
             fade_in = min(1.0, (life_z - visible_threshold) / 0.1)
             
-            # Stable radial distribution
-            center_angle = (i / petal_count) * math.pi * 2 + self.rose_twist
+            # Stable radial distribution with slight twist
+            # 6 petals = 60 degrees apart
+            angle_step = (math.pi * 2) / petal_count
+            center_angle = i * angle_step + self.rose_twist
             
-            # Apply hierarchy modifiers
-            r_final = base_radius * r_scale_base
-            final_arc_span = arc_span * span_mod
+            # Add small consistent rotational offset for "organic" feel
+            if is_inner:
+                 center_angle += 0.1
+            else:
+                 center_angle -= 0.1
             
-            # Generate Arc Points
+            # --- Bezier Ribbon Logic (Vertical Spine) ---
+            # Define a central spine using 4 control points:
+            # P0: Base (Stem Tip)
+            # P1: Lift (Vertical Up)
+            # P2: Spread (Out + Up)
+            # P3: Tip (Out + Curl)
+            
+            # Common Base
+            spine_p0 = (self.x, head_y, self.z)
+            
+            if is_inner:
+                # Inner: Vertical Cup
+                # High Lift, Narrow Spread
+                lift_h = 0.35 * openness
+                spread_r = base_radius * 0.4
+                
+                # P1: Pure vertical lift
+                spine_p1 = (self.x, head_y + lift_h, self.z)
+                
+                # P2: Up and slightly out
+                theta_p2 = center_angle
+                r_p2 = base_radius * 0.6 * openness
+                spine_p2 = (
+                    self.x + math.cos(theta_p2) * r_p2,
+                    head_y + lift_h * 1.5,
+                    self.z + math.sin(theta_p2) * r_p2
+                )
+                
+                # P3: Tip (Up and In/Out)
+                r_p3 = base_radius * 0.8 * openness
+                spine_p3 = (
+                    self.x + math.cos(center_angle) * r_p3,
+                    head_y + lift_h * 1.8,
+                    self.z + math.sin(center_angle) * r_p3
+                )
+                
+                width_angle = 0.5 # Narrow curvature
+                steps = 5
+                alpha_factor = 1.0
+
+            else:
+                # Outer: Open Bowl
+                # P1 Lift, P2 Wide, P3 Curl
+                lift_h = 0.25 * openness
+                
+                # P1: Vertical lift first!
+                spine_p1 = (self.x, head_y + lift_h, self.z)
+                
+                # P2: Wide spread, continuing up
+                r_p2 = base_radius * 1.2 * openness
+                spine_p2 = (
+                    self.x + math.cos(center_angle) * r_p2,
+                    head_y + lift_h * 2.5, # Go higher
+                    self.z + math.sin(center_angle) * r_p2
+                )
+                
+                # P3: Tip (Curl down slightly if fully open)
+                r_p3 = base_radius * 1.4 * openness
+                tip_y = head_y + lift_h * 2.2 # Slightly lower than P2 = outward curl
+                if openness < 0.5:
+                     tip_y = head_y + lift_h * 3.0 # Still pointing up if bud
+                
+                spine_p3 = (
+                    self.x + math.cos(center_angle) * r_p3,
+                    tip_y,
+                    self.z + math.sin(center_angle) * r_p3
+                )
+                
+                width_angle = 0.9 # Wide bowl
+                steps = 6
+                alpha_factor = 0.8
+
+            # --- Generate Ribbon Edges ---
+            # We calculate Left and Right Bezier curves by rotating the Control Points
+            # This creates a "cupped" ribbon surface implicitly
+            
+            left_points = []
+            right_points = []
+            
+            # Helper to rotate a point around (self.x, self.z)
+            def rotate_cp(cp, angle_delta):
+                dx = cp[0] - self.x
+                dz = cp[2] - self.z
+                # Standard 2D rotation
+                cos_a = math.cos(angle_delta)
+                sin_a = math.sin(angle_delta)
+                nx = dx * cos_a - dz * sin_a
+                nz = dx * sin_a + dz * cos_a
+                return (self.x + nx, cp[1], self.z + nz)
+
+            # Left Edge CPs
+            l_p0 = spine_p0 # Base is same
+            l_p1 = rotate_cp(spine_p1, -width_angle * 0.2) # Lift twists slightly? Keep straight for structure
+            l_p2 = rotate_cp(spine_p2, -width_angle * 0.5)
+            l_p3 = rotate_cp(spine_p3, -width_angle * 0.3) # Tip comes back in?
+            
+            # Use wider spread for main body
+            l_p1 = rotate_cp(spine_p1, -width_angle * 0.3)
+            l_p2 = rotate_cp(spine_p2, -width_angle * 0.6)
+            l_p3 = rotate_cp(spine_p3, -width_angle * 0.5)
+            
+            # Right Edge CPs (Symmetric)
+            r_p0 = spine_p0
+            r_p1 = rotate_cp(spine_p1, width_angle * 0.3)
+            r_p2 = rotate_cp(spine_p2, width_angle * 0.6)
+            r_p3 = rotate_cp(spine_p3, width_angle * 0.5)
+            
+            
+            # Generate Points
             points_3d = []
             
+            # 1. Left Edge (Base -> Tip)
             for k in range(steps + 1):
-                t_arc = k / steps # 0..1
-                
-                theta = center_angle + (t_arc - 0.5) * final_arc_span
-                
-                px = self.x + math.cos(theta) * r_final
-                pz = self.z + math.sin(theta) * r_final
-                
-                # --- Bowl Shape ---
-                base_curve = 0.15 * (1.0 - 0.5 * openness) 
-                
-                curve_drop = base_curve * ((t_arc - 0.5) * 2)**2
-                
-                # Petal tips droop slightly
-                py = head_y - (y_drop + curve_drop) * openness
-                
-                points_3d.append((px, py, pz))
+                t = k / steps
+                omt = 1.0 - t
+                bx = omt**3 * l_p0[0] + 3*omt**2 * t * l_p1[0] + 3*omt * t**2 * l_p2[0] + t**3 * l_p3[0]
+                by = omt**3 * l_p0[1] + 3*omt**2 * t * l_p1[1] + 3*omt * t**2 * l_p2[1] + t**3 * l_p3[1]
+                bz = omt**3 * l_p0[2] + 3*omt**2 * t * l_p1[2] + 3*omt * t**2 * l_p2[2] + t**3 * l_p3[2]
+                points_3d.append((bx, by, bz))
             
+            # 2. Right Edge (Tip -> Base)
+            # We reverse the range to draw back down
+            for k in range(steps, -1, -1):
+                t = k / steps
+                omt = 1.0 - t
+                bx = omt**3 * r_p0[0] + 3*omt**2 * t * r_p1[0] + 3*omt * t**2 * r_p2[0] + t**3 * r_p3[0]
+                by = omt**3 * r_p0[1] + 3*omt**2 * t * r_p1[1] + 3*omt * t**2 * r_p2[1] + t**3 * r_p3[1]
+                bz = omt**3 * r_p0[2] + 3*omt**2 * t * r_p1[2] + 3*omt * t**2 * r_p2[2] + t**3 * r_p3[2]
+                points_3d.append((bx, by, bz))
+                
+            # Close the loop
+            points_3d.append(points_3d[0])
+
             # Project
             screen_points = []
             for p3 in points_3d:
@@ -813,25 +944,51 @@ class Flower:
                 int(petal_rgb[1] * alpha_factor),
                 int(petal_rgb[2] * alpha_factor)
             )
+            
+            # Determine Glow Thickness based on hierarchy
+            if is_inner:
+                 pass_thickness = thickness + 2 # Inner/Primary gets boost? Or reverse?
+                 # Actually, usually Outer is primary in size, but Inner is primary in focus?
+                 # User plan: "Inner Petals: Shorter... Outer Petals: Wider"
+                 # Previous plan: Primary(Odd) was dominant. 
+                 # Let's make Outer (Odd) dominant in thickness.
+                 pass_thickness = thickness
+            else:
+                 # Outer (Odd)
+                 pass_thickness = thickness + 1
 
-            # Glow (controlled by phase and hierarchy)
-            if glow_intensity > 0.05:
-                # Modulate alpha by glow_intensity
-                glow_alpha = int(24 * glow_intensity)
-                if not is_primary:
-                    glow_alpha = int(glow_alpha * 0.7) # Dimmer glow for secondary
-                    
+            # --- 3-PASS GLOW SYSTEM ---
+            # Depth reduction for glow intensity
+            glow_depth_mod = max(0.2, 1.0 - depth_norm * 0.5)
+            
+            # Pass 1: Wide Soft Halo
+            # Alpha 6-8 (using 7)
+            halo_alpha = int(7 * glow_depth_mod)
+            if halo_alpha > 0:
                 pygame.draw.lines(
-                    glow_surface, 
-                    (*final_color, glow_alpha), 
-                    False, 
-                    screen_points, 
-                    thickness + glow_thickness_mod
+                    glow_surface,
+                    (*final_color, halo_alpha),
+                    False,
+                    screen_points,
+                    pass_thickness + 4
                 )
-
-            # Core (modulate brightness by fade_in to avoid popping)
-            core_alpha_sim = int(255 * fade_in) # Simulated via color mix if transparency supported
-            # Since we just draw RGB, we can just darken it
+                
+            # Pass 2: Tight Edge Glow
+            # Alpha 14-18 (using 16)
+            tight_alpha = int(16 * glow_depth_mod)
+            if tight_alpha > 0:
+                pygame.draw.lines(
+                    glow_surface,
+                    (*final_color, tight_alpha),
+                    False,
+                    screen_points,
+                    pass_thickness + 1
+                )
+            
+            # Pass 3: Core Line
+            # Drawn on main surface
+            # Use fade_in to avoid popping
+            core_alpha_sim = int(255 * fade_in) 
             drawn_color = (
                 int(final_color[0] * fade_in),
                 int(final_color[1] * fade_in),
