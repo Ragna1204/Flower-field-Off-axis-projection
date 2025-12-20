@@ -152,7 +152,11 @@ class Flower:
         self.petal_length = 0.10 + random.uniform(-0.02, 0.03)
         self.petal_spread = 0.55
         self.petal_curl = random.uniform(0.6, 1.2)
+        self.petal_spread = 0.55
+        self.petal_curl = random.uniform(0.6, 1.2)
         self.core_radius = 0.025
+        
+        self.bloom_max = 0.0 # Force monotonic bloom
 
 
 
@@ -740,12 +744,48 @@ class Flower:
             bloom_t = (life - total_delay) / (1.0 - total_delay)
             bloom_t = max(0.0, min(1.0, bloom_t))
             
-        # 3. Easing & Vertical-First Logic
-        # Lift: Fast start -> Sit tall (Power 0.5)
-        # Spread: Slow start -> Fan late (Power 2.8)
+            # Non-monotonic Fix: Latch to max observed value
+            bloom_t = max(self.bloom_max, bloom_t)
+            self.bloom_max = bloom_t
+            
+        # 3. Hesitation Logic (Rise -> Hold -> Relax)
+        # Replaces simple power easing with 3-zone map
         
-        openness_lift = bloom_t ** 0.5
-        openness_spread = bloom_t ** 2.8
+        if bloom_t < 0.35:
+            # Rise Phase (0.0 - 0.35)
+            # Fast Lift, Minimal Spread
+            t_phase = bloom_t / 0.35
+            
+            # Lift: Fast (0 -> 0.70)
+            openness_lift = 0.70 * (t_phase ** 0.5) 
+            
+            # Spread: Minimal (0 -> 0.10)
+            openness_spread = 0.10 * (t_phase ** 2.0)
+            
+        elif bloom_t < 0.65:
+            # Hold Phase (0.35 - 0.65)
+            # "Proud Pause"
+            t_phase = (bloom_t - 0.35) / 0.30
+            
+            # Lift: Slow continuation (0.70 -> 0.85)
+            # Lift keeps going up while spread waits
+            openness_lift = 0.70 + 0.15 * t_phase
+            
+            # Spread: Damped (0.10 -> 0.20)
+            # Holds the bud shape
+            openness_spread = 0.10 + 0.10 * t_phase
+            
+        else:
+            # Relax Phase (0.65 - 1.0)
+            # Gentle finish
+            t_phase = (bloom_t - 0.65) / 0.35
+            
+            # Lift: Finish (0.85 -> 1.0)
+            openness_lift = 0.85 + 0.15 * t_phase
+            
+            # Spread: Accelerate gently (0.20 -> 1.0)
+            # Smooth power curve
+            openness_spread = 0.20 + 0.80 * (t_phase ** 1.5)
         
         # Radius follows spread mostly
         radius_scale = 0.3 + 0.7 * openness_spread
@@ -831,9 +871,13 @@ class Flower:
                 # P3: Tip (Highest point for Inner)
                 # Inner petals stay proud
                 r_p3 = base_radius * 0.7 * openness_spread
+                # Gravity Drop Logic linked to bloom_t (age)
+                # Inner petals are stiff
+                gravity_drop = bloom_t * 0.035 * 0.5 
+                
                 spine_p3 = (
                     self.x + math.cos(center_angle) * r_p3,
-                    head_y + lift_max * 1.2, # Peak
+                    head_y + lift_max * 1.2 - gravity_drop, # Peak - Gravity
                     self.z + math.sin(center_angle) * r_p3
                 )
                 
@@ -863,9 +907,13 @@ class Flower:
                 # P3: The Tip (Gravity takes over)
                 # Further out, but LOWER than P2
                 r_p3 = base_radius * 1.5 * openness_spread
+                
+                # Outer petals are heavier/longer
+                gravity_drop = bloom_t * 0.035 * 1.0
+                
                 spine_p3 = (
                     self.x + math.cos(center_angle) * r_p3,
-                    head_y + lift_max * 0.85, # Drop below P2!
+                    head_y + lift_max * 0.85 - gravity_drop, # Drop below P2 - Gravity
                     self.z + math.sin(center_angle) * r_p3
                 )
                 
