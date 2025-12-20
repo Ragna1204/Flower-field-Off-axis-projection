@@ -469,16 +469,32 @@ class Flower:
         
         # Calculate Bloom State (Replicated logic for sync)
         depth_norm = max(0.0, min(1.0, self.z / self.depth_repeat))
-        life_z = life ** (1.25 + depth_norm * 2.0)
         
+        # 1. Bloom Delay
+        # Cap depth delay to prevent deep flowers from locking up
+        base_delay = 0.25
+        depth_delay = min(0.15, depth_norm * 0.2) 
+        total_delay = base_delay + depth_delay
+        
+        # 2. Bloom Progress (Normalized)
+        # Use bloom_t for stem glow fade logic too?
+        # User said "Stem glow fades as flower bloom increases"
+        # Let's use simple life for stem glow to keep it responsive, 
+        # or sync it to bloom_t. Syncing makes more sense for "transfer".
+        if life < total_delay:
+            bloom_t = 0.0
+        else:
+            bloom_t = (life - total_delay) / (1.0 - total_delay)
+            bloom_t = max(0.0, min(1.0, bloom_t))
+
         # Energy Transfer: Stem glow fades as flower blooms
-        # < 0.3: Full glow (Energy in stem)
-        # > 0.6: Reduced glow (Energy moved to flower)
-        if life_z < 0.3:
+        # < 0.2: Full glow 
+        # > 0.6: Reduced glow
+        if bloom_t < 0.2:
             stem_glow_factor = 1.0
-        elif life_z < 0.6:
+        elif bloom_t < 0.6:
             # Interpolate 1.0 -> 0.4
-            t = (life_z - 0.3) / 0.3
+            t = (bloom_t - 0.2) / 0.4
             stem_glow_factor = 1.0 - 0.6 * t
         else:
             stem_glow_factor = 0.4
@@ -706,50 +722,40 @@ class Flower:
         
         life = self.life
             
-        # --- DEPTH-BASED Easing (Slower in back) ---
+        # --- BLOOM TIMING REFINEMENT ---
+        # 1. Decoupled Logic
+        # Stem uses raw 'life' (passed in)
+        # Petals use 'bloom_t' (delayed & eased)
+        
+        # 2. Bloom Delay & Normalization
         depth_norm = max(0.0, min(1.0, self.z / self.depth_repeat))
         
-        # Power curve: shallow (front) blooms fast, deep (back) blooms slow
-        # Base 1.25 slows ALL flowers down (intra-flower speed)
-        # Depth factor 2.0 makes back rows significantly slower
-        life_z = life ** (1.25 + depth_norm * 2.0)
-
-        # --- 3-PHASE BLOOM LOGIC ---
-        # Decouple visual state into phases
-        openness = 0.0
-        radius_scale = 0.0
-        glow_intensity = 0.0
-
-        if life_z < 0.25:
-             # Phase 1: Bud Hold
-             # Tight curve, minimal radius, faint glow
-             # Normalized progress 0..1
-             t = life_z / 0.25
-             openness = 0.05 * t
-             radius_scale = 0.15 + 0.05 * t
-             glow_intensity = 0.1 * t
-             
-        elif life_z < 0.6:
-             # Phase 2: Shape Reveal
-             # Arc widens, slow growth, definition visible
-             t = (life_z - 0.25) / 0.35
-             # Cubic ease out usually feels organic for unfolding
-             et = 1.0 - (1.0 - t) ** 3
-             
-             openness = 0.05 + 0.55 * et  # 0.05 -> 0.60
-             radius_scale = 0.20 + 0.30 * et # 0.20 -> 0.50
-             glow_intensity = 0.1 + 0.2 * et
-             
+        base_delay = 0.25
+        depth_delay = min(0.15, depth_norm * 0.2) # Cap depth delay
+        total_delay = base_delay + depth_delay
+        
+        if life < total_delay:
+            bloom_t = 0.0
         else:
-             # Phase 3: Expansion
-             # Full radius growth, full glow
-             t = (life_z - 0.6) / 0.4
-             # Smoothstep for final expansion
-             et = t * t * (3 - 2 * t)
-             
-             openness = 0.60 + 0.40 * et # 0.60 -> 1.0
-             radius_scale = 0.50 + 0.50 * et # 0.50 -> 1.0
-             glow_intensity = 0.3 + 0.7 * et
+            bloom_t = (life - total_delay) / (1.0 - total_delay)
+            bloom_t = max(0.0, min(1.0, bloom_t))
+            
+        # 3. Easing & Vertical-First Logic
+        # Lift: Fast start -> Sit tall (Power 0.5)
+        # Spread: Slow start -> Fan late (Power 2.8)
+        
+        openness_lift = bloom_t ** 0.5
+        openness_spread = bloom_t ** 2.8
+        
+        # Radius follows spread mostly
+        radius_scale = 0.3 + 0.7 * openness_spread
+        
+        # Glow can follow average
+        glow_intensity = bloom_t
+        
+        # Update openness variable to serve as general progress if needed, 
+        # but we should use specific ones in geometry loop.
+        openness = bloom_t
              
         # --- GLOW INTELLIGENCE (Deprecated/Refactored) ---
         # The 3-pass system (below) replaces complex dynamic logic
@@ -778,11 +784,11 @@ class Flower:
             else:
                 visible_threshold = 0.30
                 
-            if life_z < visible_threshold:
+            if bloom_t < visible_threshold:
                 continue
                 
             # Fade in transition
-            fade_in = min(1.0, (life_z - visible_threshold) / 0.1)
+            fade_in = min(1.0, (bloom_t - visible_threshold) / 0.1)
             
             # Stable radial distribution with slight twist
             # 6 petals = 60 degrees apart
@@ -799,71 +805,71 @@ class Flower:
             # Define a central spine using 4 control points:
             # P0: Base (Stem Tip)
             # P1: Lift (Vertical Up)
-            # P2: Spread (Out + Up)
-            # P3: Tip (Out + Curl)
+            # P2: Spread (Out + Up) -> APEX for Outer
+            # P3: Tip (Out + Gravity) -> Slight curl down for Outer
             
             # Common Base
             spine_p0 = (self.x, head_y, self.z)
             
             if is_inner:
-                # Inner: Vertical Cup
-                # High Lift, Narrow Spread
-                lift_h = 0.35 * openness
-                spread_r = base_radius * 0.4
+                # Inner: Vertical Cup (The Core)
+                # Very steep, high lift
+                lift_max = 0.50 * openness_lift 
                 
-                # P1: Pure vertical lift
-                spine_p1 = (self.x, head_y + lift_h, self.z)
+                # P1: Vertical lift
+                spine_p1 = (self.x, head_y + lift_max * 0.4, self.z)
                 
-                # P2: Up and slightly out
+                # P2: Continue up, slight spread
                 theta_p2 = center_angle
-                r_p2 = base_radius * 0.6 * openness
+                r_p2 = base_radius * 0.5 * openness_spread
                 spine_p2 = (
                     self.x + math.cos(theta_p2) * r_p2,
-                    head_y + lift_h * 1.5,
+                    head_y + lift_max * 0.9, # Rising
                     self.z + math.sin(theta_p2) * r_p2
                 )
                 
-                # P3: Tip (Up and In/Out)
-                r_p3 = base_radius * 0.8 * openness
+                # P3: Tip (Highest point for Inner)
+                # Inner petals stay proud
+                r_p3 = base_radius * 0.7 * openness_spread
                 spine_p3 = (
                     self.x + math.cos(center_angle) * r_p3,
-                    head_y + lift_h * 1.8,
+                    head_y + lift_max * 1.2, # Peak
                     self.z + math.sin(center_angle) * r_p3
                 )
                 
-                width_angle = 0.5 # Narrow curvature
+                width_angle = 0.5 
                 steps = 5
                 alpha_factor = 1.0
 
             else:
-                # Outer: Open Bowl
-                # P1 Lift, P2 Wide, P3 Curl
-                lift_h = 0.25 * openness
+                # Outer: Flared Chalice with Gravity Tip
+                # P1->P2 is the "Bowl" (Upward)
+                # P2->P3 is the "Lip" (Gravity)
                 
-                # P1: Vertical lift first!
-                spine_p1 = (self.x, head_y + lift_h, self.z)
+                lift_max = 0.40 * openness_lift 
                 
-                # P2: Wide spread, continuing up
-                r_p2 = base_radius * 1.2 * openness
+                # P1: Vertical start
+                spine_p1 = (self.x, head_y + lift_max * 0.4, self.z)
+                
+                # P2: The Apex (Shoulder of the petal)
+                # High and Wide
+                r_p2 = base_radius * 1.0 * openness_spread
                 spine_p2 = (
                     self.x + math.cos(center_angle) * r_p2,
-                    head_y + lift_h * 2.5, # Go higher
+                    head_y + lift_max * 1.1, # The Peak
                     self.z + math.sin(center_angle) * r_p2
                 )
                 
-                # P3: Tip (Curl down slightly if fully open)
-                r_p3 = base_radius * 1.4 * openness
-                tip_y = head_y + lift_h * 2.2 # Slightly lower than P2 = outward curl
-                if openness < 0.5:
-                     tip_y = head_y + lift_h * 3.0 # Still pointing up if bud
-                
+                # P3: The Tip (Gravity takes over)
+                # Further out, but LOWER than P2
+                r_p3 = base_radius * 1.5 * openness_spread
                 spine_p3 = (
                     self.x + math.cos(center_angle) * r_p3,
-                    tip_y,
+                    head_y + lift_max * 0.85, # Drop below P2!
                     self.z + math.sin(center_angle) * r_p3
                 )
                 
-                width_angle = 0.9 # Wide bowl
+                width_angle = 0.9 
                 steps = 6
                 alpha_factor = 0.8
 
