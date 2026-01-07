@@ -249,18 +249,18 @@ def main(debug_windowed=False):
     tracker = HandTracking()
     renderer = GridRenderer(width, height)
     flower_field = FlowerField(lanes=12, lane_y=-1.35, depth_layers=14)
-    smile_text = SmileText(reveal_delay=5.0, fade_duration=2.0)  # Restored to 5s - timer now starts after scene ready
+    smile_text = SmileText(reveal_delay=5.0, fade_duration=2.0)
     smile_detector = SmileDetector()
     
-    # Track sustained smile for triggering
+    # Smile trigger parameters
     smile_start_time = None
-    SMILE_SUSTAIN_DURATION = 0.3  # Must hold smile for 0.3s (reduced from 0.5s)
-    SMILE_THRESHOLD = 0.5  # Uses absolute deviation - applies to both metric increase and decrease
+    SMILE_SUSTAIN_DURATION = 0.3
+    SMILE_THRESHOLD = 0.5
 
     head_world_x = 0.0
     head_world_y = 0.0
     
-    # Scene readiness flag - delays timer until after camera init
+    # Scene readiness - delays timer until rendering starts
     scene_ready = False
     frames_rendered = 0
 
@@ -291,52 +291,37 @@ def main(debug_windowed=False):
         head_world_x += (target_x - head_world_x) * HEAD_SMOOTH
         head_world_y += (target_y - head_world_y) * HEAD_SMOOTH
         
-        # Mark scene as ready after first frame is rendered
-        # This ensures timer doesn't count during black screen / camera permission
+        # Start timer only after scene is visible (not during camera init)
         if not scene_ready:
             frames_rendered += 1
-            if frames_rendered >= 3:  # Wait 3 frames to ensure stable rendering
+            if frames_rendered >= 3:
                 scene_ready = True
-                print(f"[SCENE READY] Timer starting now at frame {frames_rendered}")
+                print(f"[SCENE READY] Timer starting")
 
 
 
-        # ---- ONE-TIME SMILE TRIGGER ----
+        # Smile detection
         smile_detector.update(getattr(tracker, 'landmarks', None), intro_time)
         
-        # Debug: Print state every 2 seconds
-        if int(intro_time * 0.5) % 2 == 0 and int(intro_time * 10) % 10 == 0:
-            is_calibrated = smile_detector.is_calibrated
-            print(f"[DEBUG] t={intro_time:.1f}s | calibrated={is_calibrated} | smile={smile_detector.smile_strength:.2f} | state={world_state}")
         if world_state == WORLD_DORMANT:
-            # Only check for smile AFTER text is visible and fully faded in
+            # Check for smile only after text is fully visible
             if smile_text.visible and smile_text.alpha > 0.8:
                 smile_strength = smile_detector.smile_strength
                 is_detected = tracker.detected
                 
-                # Require sustained smile to prevent false triggers
+                # Require sustained smile
                 if is_detected and smile_strength > SMILE_THRESHOLD:
                     if smile_start_time is None:
                         smile_start_time = intro_time
-                        print(f"[SMILE] Started smiling at t={intro_time:.1f}s (strength={smile_strength:.2f}, threshold={SMILE_THRESHOLD})")
+                        print(f"[SMILE] Detected (strength={smile_strength:.2f})")
                     else:
                         sustain_duration = intro_time - smile_start_time
                         if sustain_duration >= SMILE_SUSTAIN_DURATION:
-                            print(f"\n" + "="*60)
-                            print(f"[SMILE DETECTED!] Triggering awakening at t={intro_time:.1f}s")
-                            print(f"  tracker.detected = {is_detected}")
-                            print(f"  smile_strength = {smile_strength:.3f} (threshold={SMILE_THRESHOLD})")
-                            print(f"  sustained_for = {sustain_duration:.2f}s (required={SMILE_SUSTAIN_DURATION}s)")
-                            print(f"  text.visible = {smile_text.visible}")
-                            print(f"  text.alpha = {smile_text.alpha:.3f}")
-                            print("="*60 + "\n")
+                            print(f"[AWAKENING] Triggered at t={intro_time:.1f}s")
                             world_state = WORLD_AWAKENING
                             awakening_time = 0.0
                 else:
-                    # Reset if smile drops
-                    if smile_start_time is not None:
-                        print(f"[SMILE] Smile dropped at t={intro_time:.1f}s (strength={smile_strength:.2f}, threshold={SMILE_THRESHOLD})")
-                        smile_start_time = None
+                    smile_start_time = None
 
 
         if world_state == WORLD_AWAKENING:
