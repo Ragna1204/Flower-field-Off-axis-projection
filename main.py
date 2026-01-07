@@ -5,7 +5,9 @@ import mediapipe as mp
 import threading
 import time
 import math
-from flowers import FlowerField, SmileDetector
+from flowers import FlowerField
+from smile_detector import SmileDetector
+from smile_text import SmileText
 from geometry import Point3D
 from projection import project_off_axis
 from room import RoomRenderer
@@ -245,17 +247,30 @@ def main(debug_windowed=False):
     glow_surface = pygame.Surface((width, height), pygame.SRCALPHA)
 
     tracker = HandTracking()
-    renderer = RoomRenderer(width, height)
+    renderer = GridRenderer(width, height)
     flower_field = FlowerField(lanes=12, lane_y=-1.35, depth_layers=14)
+    smile_text = SmileText(reveal_delay=5.0, fade_duration=2.0)  # Restored to 5s - timer now starts after scene ready
     smile_detector = SmileDetector()
+    
+    # Track sustained smile for triggering
+    smile_start_time = None
+    SMILE_SUSTAIN_DURATION = 0.3  # Must hold smile for 0.3s (reduced from 0.5s)
+    SMILE_THRESHOLD = 0.5  # Uses absolute deviation - applies to both metric increase and decrease
 
     head_world_x = 0.0
     head_world_y = 0.0
+    
+    # Scene readiness flag - delays timer until after camera init
+    scene_ready = False
+    frames_rendered = 0
 
     running = True
     while running:
         dt = clock.tick(fps) / 1000.0
-        intro_time += dt
+        
+        # Only start timer after scene is actually visible (not during black screen init)
+        if scene_ready:
+            intro_time += dt
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -275,17 +290,53 @@ def main(debug_windowed=False):
 
         head_world_x += (target_x - head_world_x) * HEAD_SMOOTH
         head_world_y += (target_y - head_world_y) * HEAD_SMOOTH
+        
+        # Mark scene as ready after first frame is rendered
+        # This ensures timer doesn't count during black screen / camera permission
+        if not scene_ready:
+            frames_rendered += 1
+            if frames_rendered >= 3:  # Wait 3 frames to ensure stable rendering
+                scene_ready = True
+                print(f"[SCENE READY] Timer starting now at frame {frames_rendered}")
 
 
 
         # ---- ONE-TIME SMILE TRIGGER ----
-        smile_detector.update(getattr(tracker, 'landmarks', None))
+        smile_detector.update(getattr(tracker, 'landmarks', None), intro_time)
         
+        # Debug: Print state every 2 seconds
+        if int(intro_time * 0.5) % 2 == 0 and int(intro_time * 10) % 10 == 0:
+            is_calibrated = smile_detector.is_calibrated
+            print(f"[DEBUG] t={intro_time:.1f}s | calibrated={is_calibrated} | smile={smile_detector.smile_strength:.2f} | state={world_state}")
         if world_state == WORLD_DORMANT:
-            if intro_time >= INTRO_DELAY:
-                if tracker.detected and smile_detector.smile_strength > 0.6:
-                    world_state = WORLD_AWAKENING
-                    awakening_time = 0.0
+            # Only check for smile AFTER text is visible and fully faded in
+            if smile_text.visible and smile_text.alpha > 0.8:
+                smile_strength = smile_detector.smile_strength
+                is_detected = tracker.detected
+                
+                # Require sustained smile to prevent false triggers
+                if is_detected and smile_strength > SMILE_THRESHOLD:
+                    if smile_start_time is None:
+                        smile_start_time = intro_time
+                        print(f"[SMILE] Started smiling at t={intro_time:.1f}s (strength={smile_strength:.2f}, threshold={SMILE_THRESHOLD})")
+                    else:
+                        sustain_duration = intro_time - smile_start_time
+                        if sustain_duration >= SMILE_SUSTAIN_DURATION:
+                            print(f"\n" + "="*60)
+                            print(f"[SMILE DETECTED!] Triggering awakening at t={intro_time:.1f}s")
+                            print(f"  tracker.detected = {is_detected}")
+                            print(f"  smile_strength = {smile_strength:.3f} (threshold={SMILE_THRESHOLD})")
+                            print(f"  sustained_for = {sustain_duration:.2f}s (required={SMILE_SUSTAIN_DURATION}s)")
+                            print(f"  text.visible = {smile_text.visible}")
+                            print(f"  text.alpha = {smile_text.alpha:.3f}")
+                            print("="*60 + "\n")
+                            world_state = WORLD_AWAKENING
+                            awakening_time = 0.0
+                else:
+                    # Reset if smile drops
+                    if smile_start_time is not None:
+                        print(f"[SMILE] Smile dropped at t={intro_time:.1f}s (strength={smile_strength:.2f}, threshold={SMILE_THRESHOLD})")
+                        smile_start_time = None
 
 
         if world_state == WORLD_AWAKENING:
@@ -310,34 +361,39 @@ def main(debug_windowed=False):
 
 
 
-        # Update flowers
+        # ---- UPDATE ENTITIES ----
+        smile_text.update(dt, intro_time)
         flower_field.update(dt, head_world_x, head_world_y, room_energy)
 
-        # --- DRAW ROOM ---
-        renderer.draw(
-            screen,
-            head_world_x, head_world_y,
-            camera_pitch, camera_height,
-            eye_depth, near_clip, unit_scale,
-            width, height,
-            world_to_camera,
-            energy=room_energy
+        # Draw Grid/Room
+        renderer.draw_full_grid(
+             screen,
+             head_world_x, head_world_y,
+             camera_pitch, camera_height,
+             eye_depth, near_clip, unit_scale,
+             width, height,
+             world_to_camera,
+             project_off_axis,
+             room_depth=room_depth
         )
-
-        # --- DRAW FLOWERS (fixed projection) ---
-        flower_field.draw(
-            screen,
-            glow_surface,
-            lambda p: project_off_axis(
+        
+        # Shared Projection Wrapper
+        def project_wrapper(p):
+            return project_off_axis(
                 p,
                 head_world_x, head_world_y,
                 camera_pitch, camera_height,
                 eye_depth, near_clip, unit_scale,
                 width, height,
-                world_to_camera
-            ),
-            screen_size=(width, height)
-        )
+                world_to_camera,
+                return_scale=True
+            )
+            
+        # Draw "SMILE" text (Phase 7: Narrative trigger)
+        smile_text.draw(screen, glow_surface, project_wrapper, intro_time)
+        
+        # Draw Flowers
+        flower_field.draw(screen, glow_surface, project_wrapper, screen_size=(width, height))
 
         # --- FOG DIFFUSION / BLOOM ---
         fog = pygame.transform.smoothscale(glow_surface, (width // 3, height // 3))

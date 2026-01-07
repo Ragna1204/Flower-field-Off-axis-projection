@@ -35,70 +35,7 @@ def lerp(a, b, t):
     return a + (b - a) * t
 
 
-class SmileDetector:
-    """Simple smile detector that computes a smile_strength (0..1) from
-    face landmark positions provided by MediaPipe.
 
-    Usage: call `update(landmarks)` each frame with `landmarks` being the
-    landmark list from MediaPipe (or None). The detector smooths the
-    instantaneous metric and exposes `smile_strength`.
-    """
-
-    def __init__(self, threshold: float = SMILE_THRESHOLD, smooth: float = SMILE_SMOOTHING):
-        self.threshold = threshold
-        self.smooth = smooth
-        self.smile_strength = 0.0
-        self.baseline = None
-        self.baseline_smooth = 0.02
-
-    def compute_mouth_aspect(self, lm) -> float:
-        """Compute a simple mouth aspect ratio from landmarks.
-        Expects lm to be a sequence of landmarks with .x and .y attributes.
-        We'll use lip corner indices (61, 291) and top/bottom inner lip (13, 14)
-        which are available when refine_landmarks=True.
-        """
-        try:
-            left = lm[61]
-            right = lm[291]
-            top = lm[13]
-            bottom = lm[14]
-        except Exception:
-            return 0.0
-
-        # horizontal distance between corners
-        h = math.hypot(right.x - left.x, right.y - left.y)
-        # vertical distance between inner lips
-        v = math.hypot(bottom.x - top.x, bottom.y - top.y)
-        if v <= 1e-6:
-            return 0.0
-        return (h / v)  # larger when smiling (corners stretch)
-
-    def update(self, landmarks) -> None:
-        """Call every frame with MediaPipe landmarks or None. Produces
-        `self.smile_strength` in [0,1]."""
-        if not landmarks:
-            target = 0.0
-        else:
-            metric = self.compute_mouth_aspect(landmarks)
-            # initialize baseline if needed
-            if self.baseline is None:
-                self.baseline = metric
-
-            # adapt baseline slowly
-            self.baseline = lerp(self.baseline, metric, self.baseline_smooth)
-
-            # compute strength relative to baseline
-            # scale factor to map typical mouth-aspect changes to [0,1]
-            scale = 0.5
-            raw = (metric - self.baseline) / scale
-            target = max(0.0, min(1.0, raw))
-
-        # exponential smoothing (lerp)
-        self.smile_strength = lerp(self.smile_strength, target, self.smooth)
-
-    @property
-    def smiling(self) -> bool:
-        return self.smile_strength >= self.threshold
 
 
 class Flower:
@@ -382,7 +319,7 @@ class Flower:
         life = self.life ** 1.4
 
         # Base neon thickness
-        base_thickness = max(1, int(2.2 * flattened * life))
+        base_thickness = max(1, int(0.4 * flattened * life))
 
         # Colors (Unified Palette)
         base_hue = self.hue
@@ -805,6 +742,18 @@ class Flower:
         # Stem uses raw life, so we must match it to attach correctly
         stem_height = 0.55 + 0.15 * life
         head_y = self.y + stem_height
+        
+        # --- Post-Bloom Breathing (Alive Micro-motion) ---
+        # Only active when mostly bloomed
+        if life > 0.6:
+            # Slow frequency ~ 7-8s period
+            breath_phase = self._time * 0.85 + self.stem_phase
+            
+            # Amplitude scales with life (alive) and depth (readability)
+            breath_amp = 0.012 * life * (1.0 - depth_norm * 0.8)
+            
+            breath_y = math.sin(breath_phase) * breath_amp
+            head_y += breath_y
 
         # Base dimensions driven by phase logic
         base_radius = 0.22 * radius_scale
@@ -871,19 +820,21 @@ class Flower:
                 # P3: Tip (Highest point for Inner)
                 # Inner petals stay proud
                 r_p3 = base_radius * 0.7 * openness_spread
-                # Gravity Drop Logic linked to bloom_t (age)
-                # Inner petals are stiff
-                gravity_drop = bloom_t * 0.035 * 0.5 
+                # P3: Tip (Highest point for Inner)
+                # Inner petals stay proud
+                r_p3 = base_radius * 0.7 * openness_spread
+                # Gravity Drop Logic linked to bloom_t (age) - REMOVED for organic vertex gravity
                 
                 spine_p3 = (
                     self.x + math.cos(center_angle) * r_p3,
-                    head_y + lift_max * 1.2 - gravity_drop, # Peak - Gravity
+                    head_y + lift_max * 1.2, # Peak
                     self.z + math.sin(center_angle) * r_p3
                 )
                 
                 width_angle = 0.5 
-                steps = 5
+                steps = 5 if depth_norm < 0.5 else 3
                 alpha_factor = 1.0
+                gravity_factor = 0.3 # Inner resists gravity
 
             else:
                 # Outer: Flared Chalice with Gravity Tip
@@ -908,23 +859,40 @@ class Flower:
                 # Further out, but LOWER than P2
                 r_p3 = base_radius * 1.5 * openness_spread
                 
-                # Outer petals are heavier/longer
-                gravity_drop = bloom_t * 0.035 * 1.0
+                # P3: The Tip (Gravity takes over)
+                # Further out, but LOWER than P2
+                r_p3 = base_radius * 1.5 * openness_spread
+                
+                # Outer petals are heavier/longer - Gravity moved to vertex loop
                 
                 spine_p3 = (
                     self.x + math.cos(center_angle) * r_p3,
-                    head_y + lift_max * 0.85 - gravity_drop, # Drop below P2 - Gravity
+                    head_y + lift_max * 0.85, # Drop below P2
                     self.z + math.sin(center_angle) * r_p3
                 )
                 
                 width_angle = 0.9 
-                steps = 6
+                steps = 6 if depth_norm < 0.5 else 4
                 alpha_factor = 0.8
+                gravity_factor = 1.0 # Outer succumbs to gravity
 
             # --- Generate Ribbon Edges ---
             # We calculate Left and Right Bezier curves by rotating the Control Points
             # This creates a "cupped" ribbon surface implicitly
             
+            # Post-Bloom Gravity Calculation (Vertex Relief)
+            current_gravity = 0.0
+            if bloom_t > 0.65:
+                gt = (bloom_t - 0.65) / 0.35
+                # Smoothstep
+                smooth_g = gt * gt * (3 - 2 * gt)
+                
+                # Attenuate by depth (less gravity in back)
+                depth_attenuation = 1.0 - depth_norm * 0.5
+                
+                # Tuned strength: 0.07 (Unified)
+                current_gravity = smooth_g * 0.07 * gravity_factor * depth_attenuation
+                
             left_points = []
             right_points = []
             
@@ -1017,8 +985,9 @@ class Flower:
             
             # Pass 1: Wide Soft Halo
             # Alpha 6-8 (using 7)
+            # Optimization: Skip halo for distant flowers (LOD)
             halo_alpha = int(7 * glow_depth_mod)
-            if halo_alpha > 0:
+            if halo_alpha > 0 and depth_norm < 0.65:
                 pygame.draw.lines(
                     glow_surface,
                     (*final_color, halo_alpha),
