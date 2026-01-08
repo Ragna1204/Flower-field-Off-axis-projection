@@ -249,13 +249,13 @@ def main(debug_windowed=False):
     tracker = HandTracking()
     renderer = GridRenderer(width, height)
     flower_field = FlowerField(lanes=12, lane_y=-1.35, depth_layers=14)
-    smile_text = SmileText(reveal_delay=5.0, fade_duration=2.0)
+    smile_text = SmileText(reveal_delay=5.0)
     smile_detector = SmileDetector()
     
     # Smile trigger parameters
     smile_start_time = None
     SMILE_SUSTAIN_DURATION = 0.3
-    SMILE_THRESHOLD = 0.5
+    SMILE_THRESHOLD = 0.6  # Raised from 0.5 to prevent false positives
 
     head_world_x = 0.0
     head_world_y = 0.0
@@ -305,7 +305,7 @@ def main(debug_windowed=False):
         
         if world_state == WORLD_DORMANT:
             # Check for smile only after text is fully visible
-            if smile_text.visible and smile_text.alpha > 0.8:
+            if smile_text.state == smile_text.STATE_VISIBLE:
                 smile_strength = smile_detector.smile_strength
                 is_detected = tracker.detected
                 
@@ -320,6 +320,7 @@ def main(debug_windowed=False):
                             print(f"[AWAKENING] Triggered at t={intro_time:.1f}s")
                             world_state = WORLD_AWAKENING
                             awakening_time = 0.0
+                            smile_text.start_fadeout(awakening_time)  # Request fade-out (delayed for mid-bloom)
                 else:
                     smile_start_time = None
 
@@ -347,7 +348,7 @@ def main(debug_windowed=False):
 
 
         # ---- UPDATE ENTITIES ----
-        smile_text.update(dt, intro_time)
+        smile_text.update(dt, intro_time, awakening_time)
         flower_field.update(dt, head_world_x, head_world_y, room_energy)
 
         # Draw Grid/Room
