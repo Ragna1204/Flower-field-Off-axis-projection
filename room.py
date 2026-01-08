@@ -1,293 +1,363 @@
+"""
+Energy-Responsive Room with Rainbow Edge Cycling
+"""
+
 import pygame
+import math
 from geometry import Point3D
-from projection import project_off_axis
-
-# ---- COLOR PALETTE ----
-WALL_BASE = (20, 22, 30)
-EDGE_BASE = (70, 100, 200)
-
-def clamp(v, lo=0, hi=255):
-    return max(lo, min(hi, int(v)))
-
-def edge_variation(p1, p2):
-    """Stable pseudo-random variation based on edge geometry"""
-    seed = int(
-        (p1.x * 13 + p1.y * 17 + p1.z * 19 +
-         p2.x * 23 + p2.y * 29 + p2.z * 31) * 1000
-    )
-    return 0.7 + (seed % 100) / 300.0  # range ~0.7 → 1.03
-
 
 class RoomRenderer:
+    """Renders a room with subtle rainbow edge cycling after awakening."""
+    
     def __init__(self, width, height):
         self.width = width
         self.height = height
-
-        # World dimensions
-        self.w = 3.5
-        self.h = 2.4
-        self.d = 10.0
-
-        # Glow buffer
-        self.glow = pygame.Surface((width, height), pygame.SRCALPHA)
-
-        self.fog = pygame.Surface((width, height), pygame.SRCALPHA)
-
-
-    def project(self, p, *args):
-        # Subtle parallax exaggeration (depth only)
-        parallax = 1.0 + (p.z / self.d) * 0.04
-        p = Point3D(p.x * parallax, p.y, p.z)
-
-        q = project_off_axis(p, *args)
-        if q and len(q) >= 2:
-            return (q[0], q[1])
+        
+        # Room dimensions
+        self.room_width = 4.0
+        self.room_height = 2.6
+        self.room_depth = 10.0
+        
+        # Grid spacing
+        self.floor_ceiling_spacing = 0.8
+        self.wall_spacing = 2.0
+        
+        self.glow_surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        self.fog_surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        
+        # Rainbow cycling state
+        self.rainbow_phase = 0.0
+        
+    def compute_depth_factor(self, z):
+        """Depth-based brightness falloff."""
+        if z <= 0:
+            return 1.0
+        if z >= self.room_depth:
+            return 0.35
+        
+        normalized = z / self.room_depth
+        return 1.0 - (normalized ** 1.3) * 0.65
+    
+    def get_rainbow_color(self, phase_offset=0.0):
+        """Get rainbow color based on current phase.
+        
+        Returns RGB tuple cycling through spectrum.
+        """
+        # Cycle through hue (0-360 degrees)
+        hue = ((self.rainbow_phase + phase_offset) % 360) / 360.0
+        
+        # Convert HSV to RGB (simplified)
+        # We want: red→orange→yellow→green→cyan→blue→magenta→red
+        h = hue * 6.0
+        c = 1.0
+        x = 1.0 - abs((h % 2) - 1.0)
+        
+        if h < 1:
+            r, g, b = c, x, 0
+        elif h < 2:
+            r, g, b = x, c, 0
+        elif h < 3:
+            r, g, b = 0, c, x
+        elif h < 4:
+            r, g, b = 0, x, c
+        elif h < 5:
+            r, g, b = x, 0, c
+        else:
+            r, g, b = c, 0, x
+        
+        return (int(r * 255), int(g * 255), int(b * 255))
+    
+    def blend_colors(self, base_r, base_g, base_b, rainbow_r, rainbow_g, rainbow_b, rainbow_strength):
+        """Blend base red with rainbow color.
+        
+        Args:
+            base_r, base_g, base_b: Base red color
+            rainbow_r, rainbow_g, rainbow_b: Rainbow color
+            rainbow_strength: How much rainbow to blend (0-1)
+        """
+        # Keep base red dominant, add subtle rainbow tint
+        r = int(base_r * (1 - rainbow_strength * 0.4) + rainbow_r * rainbow_strength * 0.4)
+        g = int(base_g * (1 - rainbow_strength * 0.4) + rainbow_g * rainbow_strength * 0.4)
+        b = int(base_b * (1 - rainbow_strength * 0.4) + rainbow_b * rainbow_strength * 0.4)
+        
+        return (r, g, b)
+    
+    def project_point(self, point, project_fn):
+        """Project 3D point to screen."""
+        result = project_fn(point)
+        if result and len(result) >= 2:
+            return (int(result[0]), int(result[1]))
         return None
-
-    def draw_edge(
-        self,
-        surface,
-        glow,
-        fog,
-        p1,
-        p2,
-        proj_args,      # <-- ALWAYS tuple
-        depth_factor=1.0,
-        energy=0.0      # <-- rename mood → energy
-    ):
-        q1 = self.project(p1, *proj_args)
-        q2 = self.project(p2, *proj_args)
-        if not q1 or not q2:
-            return
-
-        # ---- Clamp inputs ----
-        depth_factor = max(0.05, min(1.0, depth_factor))
-        energy = max(0.0, min(1.0, energy))
-
-
-        variation = edge_variation(p1, p2)
-
-        # ---- Flower-tinted edge color ----
-        tint_strength = energy * 0.2
-
-        flower_tint = (
-            int(140 * tint_strength),
-            int(180 * tint_strength),
-            int(220 * tint_strength),
-        )
-
-        intensity = depth_factor * variation
-
-        core_color = (
-            clamp((EDGE_BASE[0] + flower_tint[0]) * intensity),
-            clamp((EDGE_BASE[1] + flower_tint[1]) * intensity),
-            clamp((EDGE_BASE[2] + flower_tint[2]) * intensity),
-        )
-
-        # ---- CORE EDGE ----
-        pygame.draw.line(surface, core_color, q1, q2, 1)
-        pygame.draw.line(surface, core_color, q1, q2, 1)
-
-        # ---- STATIC ARCHITECTURAL ACCENT (always on) ----
-        accent_alpha = int(10 * intensity)
-        accent_color = (
-            clamp(EDGE_BASE[0] + 20),
-            clamp(EDGE_BASE[1] + 30),
-            clamp(EDGE_BASE[2] + 40),
-            accent_alpha
-        )
-        pygame.draw.line(glow, accent_color, q1, q2, 2)
-
-        # ---- GLOW EDGE ----
-        glow_alpha = int((20 + 40 * tint_strength) * intensity)
-        glow_color = (
-            clamp(core_color[0] + 40),
-            clamp(core_color[1] + 60),
-            clamp(core_color[2] + 90),
-            glow_alpha
-        )
-        pygame.draw.line(glow, glow_color, q1, q2, 4)
-
-        # ---- DEPTH FOG (THIS WAS MISSING) ----
-        fog_strength = (1.0 - depth_factor) ** 1.6
-        fog_alpha = int(25 * (1.0 - depth_factor) * energy)
-
-        if fog_alpha > 0:
-            fog_color = (
-                clamp(core_color[0] * 0.5),
-                clamp(core_color[1] * 0.5),
-                clamp(core_color[2] * 0.5),
-                fog_alpha
-            )
-            pygame.draw.line(fog, fog_color, q1, q2, 10)
-    def draw_quad_wire(
-        self,
-        surface,
-        glow,
-        fog,
-        pts,
-        proj_args,
-        depth_factor=1.0,
-        energy=0.0
-    ):
-        for i in range(4):
-            self.draw_edge(
-                surface,
-                glow,
-                fog,
-                pts[i],
-                pts[(i + 1) % 4],
-                proj_args,
-                depth_factor,
-                energy
-            )
-
-    def draw_room_fog(self, surface, energy):
-        """
-        Volumetric room fog that fills space.
-        Reacts softly to energy (smile).
-        """
-
-        if energy <= 0.01:
-            return
-
-        # Fog intensity scales gently with energy
-        fog_alpha = int(18 + 30 * energy)
-
-        # Cool neon mist color (NOT flower color yet)
-        fog_color = (50, 80, 160, fog_alpha)
-
-        # Create full-screen fog layer
-        fog_layer = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-        fog_layer.fill(fog_color)
-
-        # Downscale → upscale for cheap volumetric blur
-        fog_small = pygame.transform.smoothscale(
-            fog_layer,
-            (self.width // 3, self.height // 3)
-        )
-        fog_blur = pygame.transform.smoothscale(
-            fog_small,
-            (self.width, self.height)
-        )
-
-        # Additive blend so it feels like light in air
-        surface.blit(fog_blur, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
-
-
-
-    def draw(self, surface, head_x, head_y,
-         camera_pitch, camera_height,
-         eye_depth, near_clip, unit_scale,
-         width, height, world_to_camera,
-         energy=0.0):
+    
+    def draw(self, screen, project_fn, energy=0.0):
+        """Draw room with subtle rainbow cycling.
         
-        energy = 0
+        Args:
+            screen: Screen surface
+            project_fn: Projection function
+            energy: Awakening energy (0=dormant, 1=fully alive)
+        """
+        w = self.room_width
+        h = self.room_height
+        d = self.room_depth
         
-        self.fog.fill((0, 0, 0, 0))
-
-        self.glow.fill((0, 0, 0, 0))
-        proj_args = (
-            head_x, head_y,
-            camera_pitch, camera_height,
-            eye_depth, near_clip,
-            unit_scale,
-            width, height,
-            world_to_camera
-        )
-
-        w, h, d = self.w, self.h, self.d
-
-        # ---- FLOOR (darker, heavier) ----
-        floor = [
-            Point3D(-w, -h, 0),
-            Point3D( w, -h, 0),
-            Point3D( w, -h, d),
+        self.glow_surface.fill((0, 0, 0, 0))
+        self.fog_surface.fill((0, 0, 0, 0))
+        
+        # Update rainbow phase (slow cycling)
+        if energy > 0.8:  # Only cycle when fully awakened
+            self.rainbow_phase += 0.3  # Degrees per frame (slow)
+            if self.rainbow_phase >= 360:
+                self.rainbow_phase -= 360
+        
+        # Get current rainbow color
+        rainbow_color = self.get_rainbow_color()
+        
+        # Rainbow strength based on energy (subtle)
+        rainbow_strength = max(0, energy - 0.3) / 0.7  # Starts at energy=0.3, full at 1.0
+        
+        # ============== FLOOR GRID ==============
+        x = -w
+        while x <= w + 0.01:
+            p1 = self.project_point(Point3D(x, -h, 0), project_fn)
+            p2 = self.project_point(Point3D(x, -h, d), project_fn)
+            
+            if p1 and p2:
+                depth = self.compute_depth_factor(d / 2)
+                
+                # Base red with subtle rainbow blend
+                base = (100, 30, 40)
+                blended = self.blend_colors(*base, *rainbow_color, rainbow_strength)
+                core_color = (
+                    int(blended[0] * depth),
+                    int(blended[1] * depth),
+                    int(blended[2] * depth)
+                )
+                pygame.draw.line(screen, core_color, p1, p2, 1)
+                
+                # Glow with rainbow
+                glow_base = (180, 60, 80)
+                glow_blended = self.blend_colors(*glow_base, *rainbow_color, rainbow_strength)
+                glow_alpha = int((35 + 20 * energy) * depth)
+                glow_color = (*glow_blended, glow_alpha)
+                pygame.draw.line(self.glow_surface, glow_color, p1, p2, 2)
+            
+            x += self.floor_ceiling_spacing
+        
+        z = 0
+        while z <= d + 0.01:
+            p1 = self.project_point(Point3D(-w, -h, z), project_fn)
+            p2 = self.project_point(Point3D(w, -h, z), project_fn)
+            
+            if p1 and p2:
+                depth = self.compute_depth_factor(z)
+                
+                base = (100, 30, 40)
+                blended = self.blend_colors(*base, *rainbow_color, rainbow_strength)
+                core_color = (
+                    int(blended[0] * depth),
+                    int(blended[1] * depth),
+                    int(blended[2] * depth)
+                )
+                pygame.draw.line(screen, core_color, p1, p2, 1)
+                
+                glow_base = (180, 60, 80)
+                glow_blended = self.blend_colors(*glow_base, *rainbow_color, rainbow_strength)
+                glow_alpha = int((35 + 20 * energy) * depth)
+                glow_color = (*glow_blended, glow_alpha)
+                pygame.draw.line(self.glow_surface, glow_color, p1, p2, 2)
+            
+            z += self.floor_ceiling_spacing
+        
+        # ============== CEILING GRID ==============
+        x = -w
+        while x <= w + 0.01:
+            p1 = self.project_point(Point3D(x, h, 0), project_fn)
+            p2 = self.project_point(Point3D(x, h, d), project_fn)
+            
+            if p1 and p2:
+                depth = self.compute_depth_factor(d / 2)
+                
+                base = (115, 35, 48)
+                blended = self.blend_colors(*base, *rainbow_color, rainbow_strength)
+                core_color = (
+                    int(blended[0] * depth),
+                    int(blended[1] * depth),
+                    int(blended[2] * depth)
+                )
+                pygame.draw.line(screen, core_color, p1, p2, 1)
+                
+                glow_base = (200, 70, 90)
+                glow_blended = self.blend_colors(*glow_base, *rainbow_color, rainbow_strength)
+                glow_alpha = int((40 + 25 * energy) * depth)
+                glow_color = (*glow_blended, glow_alpha)
+                pygame.draw.line(self.glow_surface, glow_color, p1, p2, 2)
+            
+            x += self.floor_ceiling_spacing
+        
+        z = 0
+        while z <= d + 0.01:
+            p1 = self.project_point(Point3D(-w, h, z), project_fn)
+            p2 = self.project_point(Point3D(w, h, z), project_fn)
+            
+            if p1 and p2:
+                depth = self.compute_depth_factor(z)
+                
+                base = (115, 35, 48)
+                blended = self.blend_colors(*base, *rainbow_color, rainbow_strength)
+                core_color = (
+                    int(blended[0] * depth),
+                    int(blended[1] * depth),
+                    int(blended[2] * depth)
+                )
+                pygame.draw.line(screen, core_color, p1, p2, 1)
+                
+                glow_base = (200, 70, 90)
+                glow_blended = self.blend_colors(*glow_base, *rainbow_color, rainbow_strength)
+                glow_alpha = int((40 + 25 * energy) * depth)
+                glow_color = (*glow_blended, glow_alpha)
+                pygame.draw.line(self.glow_surface, glow_color, p1, p2, 2)
+            
+            z += self.floor_ceiling_spacing
+        
+        # ============== WALLS (similar pattern) ==============
+        # Left wall
+        y = -h
+        while y <= h + 0.01:
+            p1 = self.project_point(Point3D(-w, y, 0), project_fn)
+            p2 = self.project_point(Point3D(-w, y, d), project_fn)
+            
+            if p1 and p2:
+                depth = self.compute_depth_factor(d / 2)
+                
+                base = (108, 32, 44)
+                blended = self.blend_colors(*base, *rainbow_color, rainbow_strength)
+                core_color = (
+                    int(blended[0] * depth),
+                    int(blended[1] * depth),
+                    int(blended[2] * depth)
+                )
+                pygame.draw.line(screen, core_color, p1, p2, 1)
+                
+                glow_base = (190, 65, 85)
+                glow_blended = self.blend_colors(*glow_base, *rainbow_color, rainbow_strength)
+                glow_alpha = int((37 + 22 * energy) * depth)
+                glow_color = (*glow_blended, glow_alpha)
+                pygame.draw.line(self.glow_surface, glow_color, p1, p2, 2)
+            
+            y += self.wall_spacing
+        
+        z = 0
+        while z <= d + 0.01:
+            p1 = self.project_point(Point3D(-w, -h, z), project_fn)
+            p2 = self.project_point(Point3D(-w, h, z), project_fn)
+            
+            if p1 and p2:
+                depth = self.compute_depth_factor(z)
+                
+                base = (108, 32, 44)
+                blended = self.blend_colors(*base, *rainbow_color, rainbow_strength)
+                core_color = (
+                    int(blended[0] * depth),
+                    int(blended[1] * depth),
+                    int(blended[2] * depth)
+                )
+                pygame.draw.line(screen, core_color, p1, p2, 1)
+                
+                glow_base = (190, 65, 85)
+                glow_blended = self.blend_colors(*glow_base, *rainbow_color, rainbow_strength)
+                glow_alpha = int((37 + 22 * energy) * depth)
+                glow_color = (*glow_blended, glow_alpha)
+                pygame.draw.line(self.glow_surface, glow_color, p1, p2, 2)
+            
+            z += self.wall_spacing
+        
+        # Right wall
+        y = -h
+        while y <= h + 0.01:
+            p1 = self.project_point(Point3D(w, y, 0), project_fn)
+            p2 = self.project_point(Point3D(w, y, d), project_fn)
+            
+            if p1 and p2:
+                depth = self.compute_depth_factor(d / 2)
+                
+                base = (108, 32, 44)
+                blended = self.blend_colors(*base, *rainbow_color, rainbow_strength)
+                core_color = (
+                    int(blended[0] * depth),
+                    int(blended[1] * depth),
+                    int(blended[2] * depth)
+                )
+                pygame.draw.line(screen, core_color, p1, p2, 1)
+                
+                glow_base = (190, 65, 85)
+                glow_blended = self.blend_colors(*glow_base, *rainbow_color, rainbow_strength)
+                glow_alpha = int((37 + 22 * energy) * depth)
+                glow_color = (*glow_blended, glow_alpha)
+                pygame.draw.line(self.glow_surface, glow_color, p1, p2, 2)
+            
+            y += self.wall_spacing
+        
+        z = 0
+        while z <= d + 0.01:
+            p1 = self.project_point(Point3D(w, -h, z), project_fn)
+            p2 = self.project_point(Point3D(w, h, z), project_fn)
+            
+            if p1 and p2:
+                depth = self.compute_depth_factor(z)
+                
+                base = (108, 32, 44)
+                blended = self.blend_colors(*base, *rainbow_color, rainbow_strength)
+                core_color = (
+                    int(blended[0] * depth),
+                    int(blended[1] * depth),
+                    int(blended[2] * depth)
+                )
+                pygame.draw.line(screen, core_color, p1, p2, 1)
+                
+                glow_base = (190, 65, 85)
+                glow_blended = self.blend_colors(*glow_base, *rainbow_color, rainbow_strength)
+                glow_alpha = int((37 + 22 * energy) * depth)
+                glow_color = (*glow_blended, glow_alpha)
+                pygame.draw.line(self.glow_surface, glow_color, p1, p2, 2)
+            
+            z += self.wall_spacing
+        
+        # ============== BACK WALL ==============
+        corners = [
             Point3D(-w, -h, d),
-        ]
-        self.draw_quad_wire(surface, self.glow, self.fog, floor, proj_args=proj_args, depth_factor=0.45, energy=energy)
-
-        # ---- CEILING (lighter) ----
-        ceiling = [
-            Point3D(-w, h, 0),
-            Point3D( w, h, 0),
-            Point3D( w, h, d),
+            Point3D(w, -h, d),
+            Point3D(w, h, d),
             Point3D(-w, h, d),
         ]
-        self.draw_quad_wire(surface, self.glow, self.fog, ceiling, proj_args=proj_args, depth_factor=0.8, energy=energy)
-
-        # ---- LEFT WALL ----
-        left = [
-            Point3D(-w, -h, 0),
-            Point3D(-w,  h, 0),
-            Point3D(-w,  h, d),
-            Point3D(-w, -h, d),
-        ]
-        self.draw_quad_wire(surface, self.glow, self.fog, left, proj_args=proj_args, depth_factor=0.6, energy=energy)
-
-        # ---- RIGHT WALL ----
-        right = [
-            Point3D(w, -h, 0),
-            Point3D(w,  h, 0),
-            Point3D(w,  h, d),
-            Point3D(w, -h, d),
-        ]
-        self.draw_quad_wire(surface, self.glow, self.fog, right, proj_args=proj_args, depth_factor=0.6, energy=energy)
-
-        # ---- BACK WALL (farthest plane) ----
-        back = [
-            Point3D(-w, -h, d),
-            Point3D( w, -h, d),
-            Point3D( w,  h, d),
-            Point3D(-w,  h, d),
-        ]
-        self.draw_quad_wire(surface, self.glow, self.fog, back, proj_args=proj_args, depth_factor=0.9, energy=energy)
-
-
-        # ---- WALL RIBS (architectural detail) ----
-        rib_spacing = 0.7
-        z = 0.0
-        while z <= d:
-            # Left wall ribs
-            self.draw_edge(
-                surface,
-                self.glow,
-                self.fog,
-                Point3D(-w, -h, z),
-                Point3D(-w,  h, z),
-                proj_args,
-                depth_factor=0.55,
-                energy=energy
-            )
-
-            # Right wall ribs
-            self.draw_edge(
-                surface,
-                self.glow,
-                self.fog,
-                Point3D(w, -h, z),
-                Point3D(w,  h, z),
-                proj_args,
-                depth_factor=0.55,
-                energy=energy
-            )
-
-            z += rib_spacing
-
-
-        # ---- COMPOSITE GLOW ----
-        surface.blit(self.glow, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
-
-        # ---- BLUR FOG (cheap volumetric) ----
-        fog_small = pygame.transform.smoothscale(
-            self.fog,
-            (self.width // 2, self.height // 2)
+        
+        for i in range(4):
+            p1 = self.project_point(corners[i], project_fn)
+            p2 = self.project_point(corners[(i + 1) % 4], project_fn)
+            
+            if p1 and p2:
+                depth = self.compute_depth_factor(d)
+                
+                base = (130, 45, 58)
+                blended = self.blend_colors(*base, *rainbow_color, rainbow_strength)
+                core_color = (
+                    int(blended[0] * depth),
+                    int(blended[1] * depth),
+                    int(blended[2] * depth)
+                )
+                pygame.draw.line(screen, core_color, p1, p2, 1)
+                
+                glow_base = (210, 80, 95)
+                glow_blended = self.blend_colors(*glow_base, *rainbow_color, rainbow_strength)
+                glow_alpha = int((50 + 30 * energy) * depth)
+                glow_color = (*glow_blended, glow_alpha)
+                pygame.draw.line(self.glow_surface, glow_color, p1, p2, 3)
+        
+        # ============== COMPOSITE ==============
+        # Apply glow
+        glow_small = pygame.transform.smoothscale(
+            self.glow_surface,
+            (self.width // 3, self.height // 3)
         )
-        fog_blur = pygame.transform.smoothscale(
-            fog_small,
-            (self.width, self.height)
-        )
-
-        # surface.blit(fog_blur, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
-        surface.blit(self.glow, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
-        # self.draw_room_fog(surface, energy)
+        glow_blurred = pygame.transform.smoothscale(glow_small, (self.width, self.height))
+        screen.blit(glow_blurred, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)

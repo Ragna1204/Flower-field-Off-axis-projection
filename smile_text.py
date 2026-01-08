@@ -37,7 +37,7 @@ class SmileText:
         # Position in 3D space (on back wall, above flowers)
         self.text_z = 8.5  # Deep in scene (back wall)
         self.text_y = 1.5  # Raised higher to avoid flower overlap
-        self.text_x = -0.5
+        self.text_x = 0
         
         # Visual parameters
         self.base_color = (220, 235, 255)  # Brighter blue-white

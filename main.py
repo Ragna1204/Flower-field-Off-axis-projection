@@ -1,6 +1,5 @@
 import pygame
 import cv2
-import numpy as np
 import mediapipe as mp
 import threading
 import time
@@ -247,7 +246,7 @@ def main(debug_windowed=False):
     glow_surface = pygame.Surface((width, height), pygame.SRCALPHA)
 
     tracker = HandTracking()
-    renderer = GridRenderer(width, height)
+    room_renderer = RoomRenderer(width, height)
     flower_field = FlowerField(lanes=12, lane_y=-1.35, depth_layers=14)
     smile_text = SmileText(reveal_delay=5.0)
     smile_detector = SmileDetector()
@@ -351,19 +350,7 @@ def main(debug_windowed=False):
         smile_text.update(dt, intro_time, awakening_time)
         flower_field.update(dt, head_world_x, head_world_y, room_energy)
 
-        # Draw Grid/Room
-        renderer.draw_full_grid(
-             screen,
-             head_world_x, head_world_y,
-             camera_pitch, camera_height,
-             eye_depth, near_clip, unit_scale,
-             width, height,
-             world_to_camera,
-             project_off_axis,
-             room_depth=room_depth
-        )
-        
-        # Shared Projection Wrapper
+        # Shared Projection Wrapper (used by room, flowers, text)
         def project_wrapper(p):
             return project_off_axis(
                 p,
@@ -374,6 +361,9 @@ def main(debug_windowed=False):
                 world_to_camera,
                 return_scale=True
             )
+        
+        # Draw Beautiful Room
+        room_renderer.draw(screen, project_wrapper, energy=room_energy)
             
         # Draw "SMILE" text (Phase 7: Narrative trigger)
         smile_text.draw(screen, glow_surface, project_wrapper, intro_time)
@@ -394,4 +384,4 @@ def main(debug_windowed=False):
 
 
 if __name__ == "__main__":
-    main(debug_windowed=True)  # True for windowed debug mode, False for fullscreen
+    main(debug_windowed=False)  # True for windowed debug mode, False for fullscreen
