@@ -1,17 +1,16 @@
-import math
-
 def lerp(a, b, t):
     """Linear interpolation."""
     return a + (b - a) * t
 
-# Default configuration
-SMILE_THRESHOLD = 0.22
-SMILE_SMOOTHING = 0.08
+# Default configuration  
+SMILE_THRESHOLD = 0.65
+SMILE_SMOOTHING = 0.12
 
 class SmileDetector:
-    """Detects smiles from MediaPipe face landmarks using mouth aspect ratio.
+    """Detects smiles using lip corner movement.
     
-    Tracks deviation from neutral baseline and determines smile direction.
+    Tracks distance between lip corners - they move apart when smiling.
+    More reliable than mouth aspect ratio.
     """
     
     def __init__(self, threshold: float = SMILE_THRESHOLD, smooth: float = SMILE_SMOOTHING):
@@ -19,98 +18,58 @@ class SmileDetector:
         self.smooth = smooth
         self.smile_strength = 0.0
         self.baseline = None
-        self.baseline_smooth = 0.02
-        
-        # Calibration prevents false positives
-        self.calibration_start_time = None
-        self.calibration_duration = 3.0  # Extended to 3s for stable baseline
         self.is_calibrated = False
-        self.calibration_sample_count = 0
-        
-        # Smile direction detection
-        self.smile_direction = None  # Will be 1 (increase) or -1 (decrease)
-        self.direction_samples = []
-        self.direction_determined = False
+        self.calibration_samples = []
+        self.calibration_duration = 60  # 60 frames ≈ 1 second
 
-    def compute_mouth_aspect(self, lm) -> float:
-        """Compute mouth aspect ratio: horizontal distance / vertical distance.
-        Uses lip corners (61, 291) and inner lips (13, 14)."""
+    def compute_lip_corner_distance(self, lm) -> float:
+        """Compute horizontal distance between lip corners.
+        When smiling, corners move apart."""
         try:
-            left, right = lm[61], lm[291]
-            top, bottom = lm[13], lm[14]
+            left_corner = lm[61]   # Left mouth corner
+            right_corner = lm[291]  # Right mouth corner
+            
+            # Horizontal distance (x-axis)
+            distance = abs(right_corner.x - left_corner.x)
+            return distance * 1000  # Scale for easier threshold tuning
         except Exception:
             return 0.0
 
-        h = math.hypot(right.x - left.x, right.y - left.y)
-        v = math.hypot(bottom.x - top.x, bottom.y - top.y)
-        
-        if v <= 1e-6:
-            return 0.0
-        return h / v
-
     def update(self, landmarks, current_time=None) -> None:
-        """Update smile strength based on current landmarks."""
+        """Update smile strength based on lip corner distance."""
         if not landmarks:
             target = 0.0
-            self.calibration_start_time = None
-            self.is_calibrated = False
-            self.direction_determined = False
-            self.direction_samples = []
+            # Don't reset calibration - preserve it across temporary face loss
         else:
-            metric = self.compute_mouth_aspect(landmarks)
+            metric = self.compute_lip_corner_distance(landmarks)
             
             # Filter invalid metrics
-            if metric < 4.0 or metric > 2000.0:
+            if metric < 10.0 or metric > 500.0:
                 target = self.smile_strength
             else:
-                # Initialize baseline on first valid frame
-                if self.baseline is None:
-                    self.baseline = metric
-                    self.calibration_start_time = current_time
-                    print(f"[SMILE] Baseline calibration started at t={current_time:.1f}s")
-
-                # Adapt baseline only during calibration
+                # Calibration: collect neutral samples
                 if not self.is_calibrated:
-                    self.baseline = lerp(self.baseline, metric, self.baseline_smooth)
-                    self.calibration_sample_count += 1
-
-                # Check calibration completion
-                if not self.is_calibrated and current_time and self.calibration_start_time:
-                    elapsed = current_time - self.calibration_start_time
-                    if elapsed >= self.calibration_duration:
+                    self.calibration_samples.append(metric)
+                    
+                    if len(self.calibration_samples) >= self.calibration_duration:
+                        # Use median of samples as baseline (robust to outliers)
+                        self.calibration_samples.sort()
+                        self.baseline = self.calibration_samples[len(self.calibration_samples) // 2]
                         self.is_calibrated = True
-                        print(f"[SMILE] Baseline frozen at t={current_time:.1f}s (baseline={self.baseline:.1f})")
-                
-                # After calibration, determine smile direction if not yet done
-                if self.is_calibrated and not self.direction_determined:
-                    diff = metric - self.baseline
-                    if abs(diff) > 30:  # Sign change detected
-                        self.direction_samples.append(1 if diff > 0 else -1)
-                        if len(self.direction_samples) >= 5:
-                            # Use majority vote
-                            avg_direction = sum(self.direction_samples) / len(self.direction_samples)
-                            self.smile_direction = 1 if avg_direction > 0 else -1
-                            self.direction_determined = True
-                            direction_name = "INCREASE" if self.smile_direction == 1 else "DECREASE"
-                            print(f"[SMILE] Direction determined: metric {direction_name} when smiling")
-                
-                # Compute smile strength only after direction is known
-                if self.is_calibrated and self.direction_determined:
+                        print(f"[SMILE] Baseline calibrated: {self.baseline:.1f} (lip corner distance)")
+                    
+                    target = 0.0  # No smile detection during calibration
+                else:
+                    # Detect smile as deviation above baseline
                     diff = metric - self.baseline
                     
-                    # Only count deviation in the smile direction
-                    if (self.smile_direction == 1 and diff > 0) or (self.smile_direction == -1 and diff < 0):
-                        abs_diff = abs(diff)
-                        raw = abs_diff / 150.0  # 150pt change = full smile
+                    # Only positive deviations count (corners moving apart)
+                    if diff > 0:
+                        # Normalize to 0-1 range (scale: 15 units = full smile)
+                        raw = diff / 15.0
                         target = max(0.0, min(1.0, raw))
                     else:
-                        # Deviation in opposite direction - not a smile
                         target = 0.0
-                elif self.is_calibrated:
-                    # Still determining direction - don't detect smiles yet
-                    target = 0.0
-                else:
-                    target = 0.0
 
         # Smooth the result
         self.smile_strength = lerp(self.smile_strength, target, self.smooth)

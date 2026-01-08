@@ -118,7 +118,7 @@ class HandTracking:
                 lm = results.multi_face_landmarks[0]
                 pt = lm.landmark[1]
 
-                # store landmarks for smile detector
+                # Store landmarks for smile detector
                 self.landmarks = lm.landmark
 
                 self.head_x = (pt.x - 0.5) * 2
@@ -255,7 +255,7 @@ def main(debug_windowed=False):
     # Smile trigger parameters
     smile_start_time = None
     SMILE_SUSTAIN_DURATION = 0.3
-    SMILE_THRESHOLD = 0.6  # Raised from 0.5 to prevent false positives
+    SMILE_THRESHOLD = 0.65  # For lip corner distance method
 
     head_world_x = 0.0
     head_world_y = 0.0
@@ -300,7 +300,7 @@ def main(debug_windowed=False):
 
 
 
-        # Smile detection
+        # Smile detection using lip corner distance
         smile_detector.update(getattr(tracker, 'landmarks', None), intro_time)
         
         if world_state == WORLD_DORMANT:
