@@ -371,8 +371,9 @@ def main(debug_windowed=False):
         # Draw Flowers
         flower_field.draw(screen, glow_surface, project_wrapper, screen_size=(width, height))
 
-        # --- FOG DIFFUSION / BLOOM ---
-        fog = pygame.transform.smoothscale(glow_surface, (width // 3, height // 3))
+        # --- FOG DIFFUSION / BLOOM (OPTIMIZED) ---
+        # Reduce blur quality for better performance
+        fog = pygame.transform.smoothscale(glow_surface, (width // 4, height // 4))  # 4x downscale (was 3x)
         fog = pygame.transform.smoothscale(fog, (width, height))
 
         screen.blit(fog, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
@@ -384,4 +385,4 @@ def main(debug_windowed=False):
 
 
 if __name__ == "__main__":
-    main(debug_windowed=False)  # True for windowed debug mode, False for fullscreen
+    main(debug_windowed=True)  # True for windowed debug mode, False for fullscreen

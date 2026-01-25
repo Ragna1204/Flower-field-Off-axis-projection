@@ -342,27 +342,6 @@ class Flower:
             base_thickness
         )
 
-        # # ---- DRAW CORE ----
-        # self._draw_neon_core(
-        #     surface,
-        #     glow_surface,
-        #     sx,
-        #     sy,
-        #     petal_rgb,
-        #     core_rgb,
-        #     base_thickness
-        # )
-
-        # # ---- DRAW PETALS ----
-        # self._draw_neon_petals(
-        #     surface,
-        #     glow_surface,
-        #     sx,
-        #     sy,
-        #     petal_rgb,
-        #     base_thickness
-        # )
-
         # ---- DRAW ROSE HEAD ----
         self._draw_neon_rose_head(
             surface,
@@ -394,16 +373,19 @@ class Flower:
             
             # Depth scaling for ground glow
             depth_norm = max(0.0, min(1.0, self.z / self.depth_repeat))
-            g_radius = (5 + 6 * life) * (1.0 - depth_norm * 0.6)
-            g_alpha = min(8, int(20 * life)) * (1.0 - depth_norm * 0.7)
             
-            if g_alpha > 1:
-                pygame.draw.circle(
-                    glow_surface,
-                    (*color, int(g_alpha)),
-                    (int(bx), int(by)),
-                    max(1, int(g_radius))
-                )
+            # LOD: Skip ground glow for distant flowers (invisible anyway)
+            if depth_norm < 0.6:  # Only draw for near/mid flowers
+                g_radius = (5 + 6 * life) * (1.0 - depth_norm * 0.6)
+                g_alpha = min(8, int(20 * life)) * (1.0 - depth_norm * 0.7)
+                
+                if g_alpha > 1:
+                    pygame.draw.circle(
+                        glow_surface,
+                        (*color, int(g_alpha)),
+                        (int(bx), int(by)),
+                        max(1, int(g_radius))
+                    )
 
         # ---- Stem Curve Logic ----
         height = 0.55 + 0.15 * life
@@ -452,7 +434,7 @@ class Flower:
         p1 = (self.x + sway, mid_y, self.z)
         
         points = []
-        steps = 5
+        steps = 3 if depth_norm > 0.5 else 5  # LOD: Fewer steps for distant flowers
         for i in range(steps + 1):
             t = i / steps
             # Quadratic bezier
@@ -644,7 +626,7 @@ class Flower:
         if self.z > self.depth_repeat * 0.9:
             return
 
-        # 2. Scale check
+        # 2. Scale check (OPTIMIZED LOD)
         proj = project_fn(TempPoint(self.x, self.y, self.z))
         if proj is None:
             return
@@ -653,9 +635,13 @@ class Flower:
             _, _, scale = proj
         except ValueError:
             scale = 1.0
-            
-        if scale < 0.15: 
+        
+        # LOD: Skip tiny flowers entirely (invisible anyway)
+        if scale < 0.15:
             return
+        
+        # LOD flag for reducing complexity
+        skip_glow = scale < 0.3  # No glow for very small flowers
 
         # 3. Parameters & Easing
         if self.life < 0.05:
@@ -979,34 +965,38 @@ class Flower:
                  # Outer (Odd)
                  pass_thickness = thickness + 1
 
-            # --- 3-PASS GLOW SYSTEM ---
-            # Depth reduction for glow intensity
-            glow_depth_mod = max(0.2, 1.0 - depth_norm * 0.5)
-            
-            # Pass 1: Wide Soft Halo
-            # Alpha 6-8 (using 7)
-            # Optimization: Skip halo for distant flowers (LOD)
-            halo_alpha = int(7 * glow_depth_mod)
-            if halo_alpha > 0 and depth_norm < 0.65:
-                pygame.draw.lines(
-                    glow_surface,
-                    (*final_color, halo_alpha),
-                    False,
-                    screen_points,
-                    pass_thickness + 4
-                )
+
+            # --- 3-PASS GLOW SYSTEM (OPTIMIZED) ---
+            # LOD: Skip ALL glow for tiny flowers (massive performance win)
+            if not skip_glow:
+                # Depth reduction for glow intensity
+                glow_depth_mod = max(0.2, 1.0 - depth_norm * 0.5)
                 
-            # Pass 2: Tight Edge Glow
-            # Alpha 14-18 (using 16)
-            tight_alpha = int(16 * glow_depth_mod)
-            if tight_alpha > 0:
-                pygame.draw.lines(
-                    glow_surface,
-                    (*final_color, tight_alpha),
-                    False,
-                    screen_points,
-                    pass_thickness + 1
-                )
+                # Pass 1: Wide Soft Halo
+                # Alpha 6-8 (using 7)
+                # Skip halo for mid/distant flowers
+                halo_alpha = int(7 * glow_depth_mod)
+                if halo_alpha > 0 and depth_norm < 0.5:  # Reduced from 0.65
+                    pygame.draw.lines(
+                        glow_surface,
+                        (*final_color, halo_alpha),
+                        False,
+                        screen_points,
+                        pass_thickness + 4
+                    )
+                    
+                # Pass 2: Tight Edge Glow
+                # Alpha 14-18 (using 16)
+                tight_alpha = int(16 * glow_depth_mod)
+                if tight_alpha > 0:
+                    pygame.draw.lines(
+                        glow_surface,
+                        (*final_color, tight_alpha),
+                        False,
+                        screen_points,
+                        pass_thickness + 1
+                    )
+
             
             # Pass 3: Core Line
             # Drawn on main surface
@@ -1235,47 +1225,74 @@ class FlowerField:
     ) -> None:
         """Draw flowers sorted by camera-space depth (far to near) for correct occlusion.
         
-        Computes per-flower z_cam and total_depth to:
-        1. Sort flowers by depth (painter's algorithm: far first, near last).
-        2. Compute projection-consistent pixel sizes based on depth.
-        3. Pass depth info to Flower.draw for consistent perspective.
+        OPTIMIZED: Includes frustum culling and early life checks.
         """
         drawn = 0
+        culled = 0  # Performance tracking
+        
         if screen_size is None:
             sw_sh = surface.get_size()
         else:
             sw_sh = screen_size
         
-        # Import camera helpers from 3d grid module
+        sw, sh = sw_sh
+        frustum_margin = 150  # Pixels outside screen to still draw
+        
+        # Import camera helpers
         try:
             from __main__ import (
                 world_to_camera, camera_depth_for_point, 
                 eye_depth, unit_scale, camera_pitch, camera_height, near_clip
             )
         except ImportError:
-            # Fallback: draw without sorting (old behavior)
+            # Fallback: draw without sorting
             for f in self.flowers:
                 if drawn >= FLOWER_DRAW_LIMIT:
                     break
-                if f.is_visible(project_fn, head_x, head_y, screen_size=sw_sh):
-                    f.draw(surface, project_fn, head_x, head_y, screen_size=sw_sh)
+                if f.life > 0.01:  # Early life check
+                    f.draw(surface, glow_surface, project_fn, screen_size=sw_sh)
                     drawn += 1
             return
         
         # Compute depth for each flower and build sortable list
         items = []
         for f in self.flowers:
+            # OPTIMIZATION 1: Skip dormant flowers early
+            if f.life <= 0.01:
+                culled += 1
+                continue
+            
             try:
                 # Use temp point for world_to_camera
                 p = TempPoint(f.x, f.y, f.z)
                 x_cam, y_cam, z_cam = world_to_camera(p, camera_pitch, camera_height)
                 total_depth = eye_depth + z_cam
                 
-                # Cull flowers behind near plane
+                # OPTIMIZATION 2: Cull flowers behind near plane
                 if total_depth <= near_clip:
+                    culled += 1
+                    continue
+                
+                # OPTIMIZATION 3: Project and frustum cull
+                proj = project_fn(p)
+                if proj is None:
+                    culled += 1
+                    continue
+                
+                try:
+                    sx, sy, scale = proj
+                except ValueError:
+                    sx, sy = proj[:2]
+                    scale = 1.0
+                
+                # OPTIMIZATION 4: Frustum culling with margin
+                if (sx < -frustum_margin or sx > sw + frustum_margin or
+                    sy < -frustum_margin or sy > sh + frustum_margin):
+                    culled += 1
                     continue
                 
                 items.append((z_cam, total_depth, f))
+                
             except Exception:
                 # Fallback to unsorted draw
                 items.append((f.z, f.z, f))
@@ -1300,6 +1317,10 @@ class FlowerField:
                 screen_size=sw_sh
             )
             drawn += 1
+        
+        # Store stats (optional - for debugging)
+        self.flowers_drawn_last_frame = drawn
+        self.flowers_culled_last_frame = culled
 
 
 
