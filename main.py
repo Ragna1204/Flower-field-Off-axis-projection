@@ -11,6 +11,7 @@ from geometry import Point3D
 from projection import project_off_axis
 from room import RoomRenderer
 from audio_manager import AudioManager
+from message_renderer import MessageRenderer
 
 # Configuration (initial values; updated to native resolution at runtime)
 width, height = 1000, 700
@@ -43,6 +44,7 @@ WORLD_ALIVE = 2       # fully awakened
 world_state = WORLD_DORMANT
 awakening_time = 0.0
 intro_time = 0.0
+music_time = 0.0  # Continuous timer for music/messages (doesn't cap like awakening_time)
 
 # ---- AWAKENING TIMING ----
 INTRO_DELAY = 5.0          # seconds before smile is allowed
@@ -252,6 +254,7 @@ def main(debug_windowed=False):
     smile_text = SmileText(reveal_delay=5.0)
     smile_detector = SmileDetector()
     audio_manager = AudioManager(audio_dir="audio", crossfade_duration=5.0)
+    message_renderer = MessageRenderer()
     
     # Smile trigger parameters
     smile_start_time = None
@@ -260,6 +263,9 @@ def main(debug_windowed=False):
 
     head_world_x = 0.0
     head_world_y = 0.0
+    
+    # Timing variables
+    music_time = 0.0  # Continuous timer for music/messages
     
     # Scene readiness - delays timer until rendering starts
     scene_ready = False
@@ -329,9 +335,13 @@ def main(debug_windowed=False):
 
         if world_state == WORLD_AWAKENING:
             awakening_time += dt
+            music_time += dt  # Continuous timer
             if awakening_time >= AWAKEN_DURATION:
                 awakening_time = AWAKEN_DURATION
                 world_state = WORLD_ALIVE
+        
+        elif world_state == WORLD_ALIVE:
+            music_time += dt  # Keep counting after fully awakened
         
         # Update audio system (checks for song end and crossfade)
         audio_manager.update(dt)
@@ -355,6 +365,7 @@ def main(debug_windowed=False):
         # ---- UPDATE ENTITIES ----
         smile_text.update(dt, intro_time, awakening_time)
         flower_field.update(dt, head_world_x, head_world_y, room_energy)
+        message_renderer.update(dt, music_time)  # Use music_time for continuous timing
 
         # Shared Projection Wrapper (used by room, flowers, text)
         def project_wrapper(p):
@@ -376,6 +387,9 @@ def main(debug_windowed=False):
         
         # Draw Flowers
         flower_field.draw(screen, glow_surface, project_wrapper, screen_size=(width, height))
+        
+        # Draw Messages (Phase 10: Message System)
+        message_renderer.draw(screen, project_wrapper)
 
         # --- FOG DIFFUSION / BLOOM (OPTIMIZED) ---
         # Reduce blur quality for better performance
