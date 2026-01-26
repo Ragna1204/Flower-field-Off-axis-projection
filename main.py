@@ -10,6 +10,7 @@ from smile_text import SmileText
 from geometry import Point3D
 from projection import project_off_axis
 from room import RoomRenderer
+from audio_manager import AudioManager
 
 # Configuration (initial values; updated to native resolution at runtime)
 width, height = 1000, 700
@@ -250,6 +251,7 @@ def main(debug_windowed=False):
     flower_field = FlowerField(lanes=12, lane_y=-1.35, depth_layers=14)
     smile_text = SmileText(reveal_delay=5.0)
     smile_detector = SmileDetector()
+    audio_manager = AudioManager(audio_dir="audio", crossfade_duration=5.0)
     
     # Smile trigger parameters
     smile_start_time = None
@@ -320,6 +322,7 @@ def main(debug_windowed=False):
                             world_state = WORLD_AWAKENING
                             awakening_time = 0.0
                             smile_text.start_fadeout(awakening_time)  # Request fade-out (delayed for mid-bloom)
+                            audio_manager.start_music()  # Start Afterthought
                 else:
                     smile_start_time = None
 
@@ -329,6 +332,9 @@ def main(debug_windowed=False):
             if awakening_time >= AWAKEN_DURATION:
                 awakening_time = AWAKEN_DURATION
                 world_state = WORLD_ALIVE
+        
+        # Update audio system (checks for song end and crossfade)
+        audio_manager.update(dt)
 
 
         # ---- PHASE D4: TIME-BASED ENERGY ----
