@@ -12,6 +12,7 @@ from projection import project_off_axis
 from room import RoomRenderer
 from audio_manager import AudioManager
 from message_renderer import MessageRenderer
+from pollen import PollenSystem
 
 # Configuration (initial values; updated to native resolution at runtime)
 width, height = 1000, 700
@@ -255,6 +256,7 @@ def main(debug_windowed=False):
     smile_detector = SmileDetector()
     audio_manager = AudioManager(audio_dir="audio", crossfade_duration=5.0)
     message_renderer = MessageRenderer()
+    pollen_system = PollenSystem()
     
     # Smile trigger parameters
     smile_start_time = None
@@ -266,6 +268,10 @@ def main(debug_windowed=False):
     
     # Timing variables
     music_time = 0.0  # Continuous timer for music/messages
+    
+    # Pollen activation parameters
+    POLLEN_ACTIVATION_DELAY = 15.0  # 15s after awakening
+    pollen_activated = False
     
     # Scene readiness - delays timer until rendering starts
     scene_ready = False
@@ -366,6 +372,16 @@ def main(debug_windowed=False):
         smile_text.update(dt, intro_time, awakening_time)
         flower_field.update(dt, head_world_x, head_world_y, room_energy)
         message_renderer.update(dt, music_time)  # Use music_time for continuous timing
+        
+        # Activate pollen system 15s after awakening
+        if world_state != WORLD_DORMANT and not pollen_activated:
+            if music_time >= POLLEN_ACTIVATION_DELAY:
+                pollen_system.activate()
+                pollen_activated = True
+                print(f"[POLLEN] Activated at t={music_time:.1f}s")
+        
+        # Update pollen particles
+        pollen_system.update(dt, flower_field.flowers, music_time)
 
         # Shared Projection Wrapper (used by room, flowers, text)
         def project_wrapper(p):
@@ -387,6 +403,17 @@ def main(debug_windowed=False):
         
         # Draw Flowers
         flower_field.draw(screen, glow_surface, project_wrapper, screen_size=(width, height))
+        
+        # Draw Pollen Particles (Phase 4: Pollen System)
+        # Create projection wrapper class for pollen
+        class ProjectionWrapper:
+            def project(self, p):
+                result = project_wrapper(p)
+                if result is None:
+                    return None
+                return (result[0], result[1])  # Return only x, y (not scale)
+        
+        pollen_system.render(screen, ProjectionWrapper())
         
         # Draw Messages (Phase 10: Message System)
         message_renderer.draw(screen, project_wrapper)

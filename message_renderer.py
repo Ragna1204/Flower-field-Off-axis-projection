@@ -64,8 +64,8 @@ class MessageRenderer:
             # Adjust these based on actual song length
             {"text": ":)", "start": 191, "duration": 3, "pause": 0},
             {"text": "None of ts is done w ai btw", "start": 207, "duration": 2, "pause": 0},
-            {"text": "Okay omveer appreciation day", "start": 212, "duration": 4, "pause": 0},
-            {"text": "W music taste btw", "start": 220, "duration": 3, "pause": 0},  # when beat starts
+            {"text": "Okay \nomveer appreciation day", "start": 212, "duration": 4, "pause": 0},
+            {"text": "W music taste", "start": 220, "duration": 3, "pause": 0},  # when beat starts
             {"text": "What else", "start": 225, "duration": 3, "pause": 0},
             {"text": "Idk nothing much\n<(￣︶￣)>", "start": 229, "duration": 4, "pause": 0},
             
@@ -75,7 +75,7 @@ class MessageRenderer:
             {"text": "I know a lot of people\nbut i dont hang out with a lot of people", "start": 254, "duration": 5, "pause": 0},
             {"text": "You are amongst the very few\nI like being with", "start": 262, "duration": 4, "pause": 0},
             
-            {"text": "We also got the lifetime bestie scar too, twin", "start": 269, "duration": 3, "pause": 0},
+            {"text": "We also got the lifetime \nbestie scar too, twin", "start": 269, "duration": 3, "pause": 0},
             {"text": "Certified trauma bonding", "start": 273, "duration": 2, "pause": 0},
             {"text": "Even then, the only thing in my head was\nki tujhe kuch nahi hona chahiye", "start": 278, "duration": 6, "pause": 0},
             {"text": "Still got the scar", "start": 282, "duration": 2, "pause": 0},
@@ -89,9 +89,9 @@ class MessageRenderer:
             
             {"text": "I want to know you more", "start": 318, "duration": 2, "pause": 0},
             {"text": "I want you to know me more too", "start": 322, "duration": 2, "pause": 0},
-            {"text": "We leave a lot of planned things undone", "start": 325, "duration": 2, "pause": 0},
-            {"text": "There are many things id want to do together", "start": 328, "duration": 2.5, "pause": 0},
-            {"text": "Chowki dhani definately being one of them 🥀", "start": 332, "duration": 3, "pause": 0},
+            {"text": "We leave a lot of planned things \nundone", "start": 325, "duration": 2, "pause": 0},
+            {"text": "There are many things id want \nto do together", "start": 328, "duration": 2.5, "pause": 0},
+            {"text": "Chowki dhani definately being \none of them 🥀", "start": 332, "duration": 3, "pause": 0},
             {"text": "Hmm split fiction", "start": 336, "duration": 1, "pause": 0},
             
             {"text": "I might not express it much", "start": 343, "duration": 3, "pause": 0},
