@@ -41,7 +41,7 @@ class MessageRenderer:
         """
         messages = [
             # During Afterthought - minimal text
-            {"text": "Sorry ts took a while", "start": 7, "duration": 3.5, "pause": 0},
+            {"text": "Sorry this took a while", "start": 7, "duration": 3.5, "pause": 0},
             {"text": "Didnt want to rush it", "start": 12, "duration": 3.5, "pause": 0},
             {"text": "This was the \"project\" I \nhad to do lol", "start": 26, "duration": 4, "pause": 0},
             {"text": "Lowkey underestimated it hard", "start": 32, "duration": 5, "pause": 0},
@@ -50,7 +50,7 @@ class MessageRenderer:
             {"text": "Sorry if I did or said \nsomething I shouldnt have", "start": 85, "duration": 5, "pause": 3},
             
             {"text": "Yk that sunflowers turn towards each \nother when no sun", "start": 108, "duration": 4, "pause": 0},
-            {"text": "So", "start": 115, "duration": 1, "pause": 0},
+            {"text": "Anyway", "start": 115, "duration": 1, "pause": 0},
             {"text": "This song felt right", "start": 148, "duration": 2, "pause": 0},
             {"text": "One of my favourite songs for", "start": 152, "duration": 2, "pause": 0},
             {"text": "One of my favourites \nheh", "start": 155, "duration": 2, "pause": 0},

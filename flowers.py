@@ -118,12 +118,25 @@ class Flower:
         # --- Energy-based breathing (IMPORTANT) ---
         life = self.life  # tie motion to life, not time
 
-        self.breath_offset = (
+        # Primary breathing
+        primary_breath = (
             math.sin(self._time * 1.1 + self.x * 2.0)
             * 0.02
             * depth_factor
             * life
         )
+        
+        # Secondary slow wave (Phase 11: Enhanced breathing for post-bloom)
+        if life >= 1.0:  # Only when fully bloomed
+            secondary_breath = (
+                math.sin(self._time * 0.15 + self.stem_phase)
+                * 0.01
+                * depth_factor
+            )
+        else:
+            secondary_breath = 0.0
+        
+        self.breath_offset = primary_breath + secondary_breath
 
 
     # def draw(
@@ -288,7 +301,9 @@ class Flower:
         surface: pygame.Surface,
         glow_surface: pygame.Surface,
         project_fn,
-        screen_size=None
+        screen_size=None,
+        glow_multiplier=1.0,
+        color_cycle_phase=0.0
     ) -> None:
 
         # ---- Early exit ----
@@ -330,6 +345,20 @@ class Flower:
         val_scale = 1.0 - depth_norm * 0.25
 
         petal_rgb = self.hsv_to_rgb(base_hue, 0.85 * sat_scale, 1.0 * val_scale)
+        
+        # POST-BLOOM: Apply color cycling (Phase 11)
+        if self.life >= 1.0 and color_cycle_phase > 0.0:
+            # Calculate rainbow color for this flower
+            cycle_hue = (color_cycle_phase + base_hue * 360) % 360 / 360.0
+            rainbow_rgb = self.hsv_to_rgb(cycle_hue, 0.85 * sat_scale, 1.0 * val_scale)
+            
+            # Blend 30% rainbow with 70% base color
+            blend_strength = 0.3
+            petal_rgb = tuple(
+                int(petal_rgb[i] * (1 - blend_strength) + rainbow_rgb[i] * blend_strength)
+                for i in range(3)
+            )
+        
         core_rgb  = (255, 245, 210)
         stem_rgb  = self.hsv_to_rgb(base_hue, 0.55 * sat_scale, 0.75 * val_scale)
 
@@ -348,7 +377,8 @@ class Flower:
             glow_surface,
             project_fn,
             petal_rgb,
-            base_thickness
+            base_thickness,
+            glow_multiplier=glow_multiplier
         )
 
 
@@ -620,7 +650,8 @@ class Flower:
         glow_surface,
         project_fn,
         petal_rgb,
-        thickness
+        thickness,
+        glow_multiplier=1.0
     ):
         # 1. Distance culling
         if self.z > self.depth_repeat * 0.9:
@@ -972,26 +1003,29 @@ class Flower:
                 # Depth reduction for glow intensity
                 glow_depth_mod = max(0.2, 1.0 - depth_norm * 0.5)
                 
+                # POST-BLOOM: Apply glow multiplier (Phase 11)
+                effective_glow_mod = glow_depth_mod * glow_multiplier
+                
                 # Pass 1: Wide Soft Halo
-                # Alpha 6-8 (using 7)
+                # Alpha 6-8 (using 7), intensifies with glow_multiplier
                 # Skip halo for mid/distant flowers
-                halo_alpha = int(7 * glow_depth_mod)
+                halo_alpha = int(7 * effective_glow_mod)
                 if halo_alpha > 0 and depth_norm < 0.5:  # Reduced from 0.65
                     pygame.draw.lines(
                         glow_surface,
-                        (*final_color, halo_alpha),
+                        (*final_color, min(255, halo_alpha)),
                         False,
                         screen_points,
                         pass_thickness + 4
                     )
                     
                 # Pass 2: Tight Edge Glow
-                # Alpha 14-18 (using 16)
-                tight_alpha = int(16 * glow_depth_mod)
+                # Alpha 14-18 (using 16), intensifies with glow_multiplier
+                tight_alpha = int(16 * effective_glow_mod)
                 if tight_alpha > 0:
                     pygame.draw.lines(
                         glow_surface,
-                        (*final_color, tight_alpha),
+                        (*final_color, min(255, tight_alpha)),
                         False,
                         screen_points,
                         pass_thickness + 1
@@ -1129,6 +1163,11 @@ class FlowerField:
         self.flowers: List[Flower] = []
         self.color_progress = 0.0
         self.life = 0.0  # per-flower wave life (0..1)
+        
+        # Post-bloom dynamics (Phase 11)
+        self.glow_multiplier = 1.0  # Progressive glow intensification (1.0 → 2.5)
+        self.color_cycle_phase = 0.0  # Continuous color cycling in degrees
+        self.post_bloom_time = 0.0  # Time since full bloom
 
 
         # center lanes across X and create a few depth layers per lane
@@ -1155,6 +1194,21 @@ class FlowerField:
         world_energy goes from 0 → 1 over awakening.
         A radial wave propagates from front-center into the field.
         """
+        
+        # ---- POST-BLOOM DYNAMICS (Phase 11) ----
+        if world_energy >= 1.0:  # Fully awakened
+            self.post_bloom_time += dt
+            
+            # Progressive glow intensification (1.0 → 2.5 over 60 seconds)
+            GLOW_INTENSIFICATION_DURATION = 60.0
+            GLOW_MAX_MULTIPLIER = 2.5
+            glow_progress = min(self.post_bloom_time / GLOW_INTENSIFICATION_DURATION, 1.0)
+            self.glow_multiplier = 1.0 + ((GLOW_MAX_MULTIPLIER - 1.0) * glow_progress)
+            
+            # Continuous color cycling (slow rainbow shift)
+            COLOR_CYCLE_SPEED = 0.15  # degrees per second
+            self.color_cycle_phase += dt * COLOR_CYCLE_SPEED
+            self.color_cycle_phase = self.color_cycle_phase % 360.0
 
         # ---- Wave tuning ----
         WAVE_WIDTH = 0.9
@@ -1314,7 +1368,9 @@ class FlowerField:
                 surface,
                 glow_surface,
                 project_fn,
-                screen_size=sw_sh
+                screen_size=sw_sh,
+                glow_multiplier=self.glow_multiplier,
+                color_cycle_phase=self.color_cycle_phase
             )
             drawn += 1
         
